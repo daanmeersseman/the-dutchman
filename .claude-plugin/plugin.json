@@ -1,0 +1,15 @@
+{
+  "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
+  "name": "burndown",
+  "version": "0.1.0",
+  "description": "Brings your Claude Code bill down with fixes and reminders measured on your own session logs",
+  "author": {
+    "name": "daanmeersseman",
+    "url": "https://github.com/daanmeersseman"
+  },
+  "homepage": "https://github.com/daanmeersseman/claude-burndown",
+  "repository": "https://github.com/daanmeersseman/claude-burndown",
+  "license": "MIT",
+  "keywords": ["cost", "tokens", "usage", "cache", "savings"],
+  "types": "./types/index.d.ts"
+}
