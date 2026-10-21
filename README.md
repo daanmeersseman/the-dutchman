@@ -1,10 +1,9 @@
-<h1>
-  <img src="assets/icon.svg" alt="" width="48" align="center">
-  The Dutchman
-</h1>
+<p align="center">
+  <img src="assets/banner.png" alt="The Dutchman: not a cent more on Claude Code than needed" width="100%">
+</p>
 
-**Not a cent more on Claude Code than needed.** The Dutchman reads your own Claude Code logs, finds the settings and
-habits that cost you money, and tells you how much. One click applies the fix, and one click undoes it.
+The Dutchman reads your own Claude Code logs, finds the settings and habits that cost you money, and tells you how
+much. One click applies the fix, and one click undoes it.
 
 As we all know, the Dutch are notoriously stingy. And yet we could all use a Dutchman looking over our shoulder
 while we use Claude.
