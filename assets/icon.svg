@@ -1,14 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
-  <defs>
-    <linearGradient id="wood" x1="0" y1="1" x2="0" y2="0">
-      <stop offset="0" stop-color="#E8613C"/>
-      <stop offset="1" stop-color="#F2994A"/>
-    </linearGradient>
-  </defs>
-  <rect width="256" height="256" rx="56" fill="#1F1B1A"/>
-  <circle cx="188" cy="62" r="30" fill="#FFF4EC"/>
-  <text x="188" y="77" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-weight="700" font-size="42" fill="#E8613C">$</text>
-  <path fill="#FFF4EC" d="M168 112A20 7 0 0 1 208 112V118H168Z"/>
-  <path fill="url(#wood)" d="M26 126C30 122 36 124 42 130C66 140 98 134 120 120C134 112 146 108 160 108H164C164 120 212 120 212 108C222 110 230 120 230 134V182C230 196 220 206 206 206H84C56 206 40 192 32 166C28 152 24 136 26 126Z"/>
-  <path fill="none" stroke="#1F1B1A" stroke-opacity="0.3" stroke-width="6" stroke-linecap="round" d="M58 176C96 182 142 178 180 166"/>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256"><defs>
+  <linearGradient id="wood" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#E8613C"/><stop offset="1" stop-color="#F2994A"/></linearGradient>
+  <linearGradient id="gold" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#E8A33C"/><stop offset="1" stop-color="#F6C964"/></linearGradient>
+</defs>
+<rect width="256" height="256" rx="56" fill="#1F1B1A"/><g transform="translate(0 10) scale(1)"><path fill="url(#wood)" d="M46 178C40 160 40 130 50 112C54 104 62 100 72 100H118C126 100 132 104 138 110C156 126 180 138 206 142C220 144 230 140 238 132C242 144 236 162 222 176C206 192 182 198 150 198H70C58 198 50 192 46 178Z"/><path fill="#1F1B1A" fill-opacity="0.22" d="M50 184C58 194 64 198 72 198H150C182 198 206 192 222 176C206 188 182 192 150 192H72C64 192 56 190 50 184Z"/><path fill="#1F1B1A" d="M60 106C64 100 70 98 78 98H116C122 98 128 100 132 106C110 116 80 116 60 106Z"/><path fill="none" stroke="#FFF4EC" stroke-opacity="0.55" stroke-width="5" stroke-linecap="round" d="M150 134C170 146 190 152 212 152"/></g><circle cx="97" cy="56" r="30" fill="url(#gold)" stroke="#FFF4EC" stroke-width="4"/><text x="97" y="70.4" text-anchor="middle" font-family="Georgia, serif" font-weight="700" font-size="42.0" fill="#1F1B1A">$</text><path stroke="#FFF4EC" stroke-width="4" stroke-linecap="round" d="M97 92V104" stroke-dasharray="3 6"/></svg>
