@@ -1,7 +1,7 @@
 """No output style at all. The saving is small (most output is thinking), so it is an estimate on visible text only."""
 from tiplib import cost, main_turns, price_of
 
-SHARE = 0.10  # guide 8: Concise mostly drops the recap; assume a tenth of the main sessions' output
+SHARE = 0.10  # Concise mostly drops the recap; assume a tenth of the output
 
 
 def detect(calls, settings, **_):
@@ -12,14 +12,14 @@ def detect(calls, settings, **_):
     if save < 1:
         return None
     return {
-        'id': 'output-style', 'kind': 'fix', 'category': 'Output', 'confidence': 'estimate',
+        'id': 'output-style', 'kind': 'fix', 'confidence': 'estimate',
         'title': 'Use the Concise output style',
         'saving': save, 'measured': out,
-        'problem': f'You use the Default output style. Your main sessions wrote ${out:.2f} of output.',
+        'problem': f'You use the Default output style. Your sessions wrote ${out:.2f} of output, not counting subagents.',
         'how': 'Concise makes Claude answer first, without "Let me..." and without a recap at the end. You mostly save '
                'reading time; the cost effect is small.',
         'assumption': f'About {SHARE:.0%} less output. Most output is thinking, which a style does not change.',
         'change': 'Sets "outputStyle": "Concise" in ~/.claude/settings.json.',
         'actions': [{'op': 'json-merge', 'file': '~/.claude/settings.json', 'value': {'outputStyle': 'Concise'}}],
-        'restart': True, 'guide': '8',
+        'restart': True,
     }

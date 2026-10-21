@@ -2,8 +2,11 @@
 WINDOW = 300_000
 
 
+from tiplib import dget
+
+
 def detect(sessions, settings, days, **_):
-    pct = (settings.get('env') or {}).get('CLAUDE_AUTOCOMPACT_PCT_OVERRIDE')
+    pct = dget(settings, 'env', 'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE')
     try:
         pct = float(pct)
     except (TypeError, ValueError):
@@ -13,19 +16,20 @@ def detect(sessions, settings, days, **_):
     autos = sum(1 for s in sessions.values() for _, trig in s['compactions'] if trig == 'auto')
     window = settings.get('autoCompactWindow')
     return {
-        'id': 'autocompact-override', 'kind': 'fix', 'category': 'Sessions', 'confidence': 'config',
-        'title': f'Auto-compact fires at {pct:g}% of the window',
+        'id': 'autocompact-override', 'kind': 'fix', 'confidence': 'config',
+        'title': f'Stop auto-compact from firing at {pct:g}%',
         'saving': None, 'measured': None,
         'problem': f'~/.claude/settings.json sets CLAUDE_AUTOCOMPACT_PCT_OVERRIDE to {pct:g}. Claude compacted on its own '
                    f'{autos} times in {days} days. Each compaction is a full model call over the conversation, and it '
-                   'summarises at a moment you did not choose.',
-        'how': 'autoCompactWindow sets the size at which Claude compacts, in tokens. It does what a low percentage was '
-               'meant for, without compacting again right after.',
+                   'summarizes at a moment you did not choose.',
+        'how': 'A low percentage makes Claude compact long before the window is full, and again soon after. '
+               'autoCompactWindow sets one size in tokens at which Claude compacts, so a session compacts only once it '
+               'gets that big.',
         'assumption': None,
         'change': 'Removes CLAUDE_AUTOCOMPACT_PCT_OVERRIDE from env in ~/.claude/settings.json' +
                   ('.' if window else f' and sets "autoCompactWindow": {WINDOW}.'),
         'actions': [{'op': 'json-merge', 'file': '~/.claude/settings.json',
                      'value': {'env': {'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE': None},
                                **({} if window else {'autoCompactWindow': WINDOW})}}],
-        'restart': True, 'guide': '4',
+        'restart': True,
     }

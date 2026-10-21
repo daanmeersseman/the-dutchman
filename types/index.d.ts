@@ -6,6 +6,7 @@ export type Reminder = {
   at?: number // context-size reminder: first at this many tokens
   every?: number // and again at each this many more
   idle_ms?: number // idle reminder: after this long without a turn
+  before_expiry_ms?: number // idle reminder: this long before the prompt cache expires, by the cache setting of the moment
   min_tokens?: number // only for a context at least this big
   on_resume?: boolean // once when a session opens that already carries min_tokens
 }
@@ -13,7 +14,6 @@ export type Reminder = {
 export type Tip = {
   id: string
   kind: TipKind
-  category: string
   confidence: 'exact' | 'estimate' | 'measured' | 'config'
   title: string
   saving: number | null
@@ -28,10 +28,18 @@ export type Tip = {
   choose?: { question: string; items: string[] }
   min_version?: string
   restart: boolean
-  guide: string
 }
 
-export type Result = { days: number; spend: number; calls: number; tips: Tip[]; note?: string; errors?: string[]; at: number }
+export type Result = {
+  days: number // the window asked for
+  history_days: number // the days of it the logs cover; amounts are per 30 of these
+  spend: number
+  calls: number
+  tips: Tip[]
+  note?: string
+  errors?: string[]
+  at: number
+}
 export type Status = { status: 'dismissed' | 'applied'; at: number; tip?: Tip }
 export type State = Record<string, Status>
 

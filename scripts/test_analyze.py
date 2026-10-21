@@ -3,8 +3,10 @@ import datetime as dt, json, os, sys, tempfile, unittest
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import analyze
+from tiplib import norm
 
 NOW = dt.datetime(2026, 10, 20, 12, 0, tzinfo=dt.timezone.utc)
+X = 3  # the fixture's logs cover 10 days; amounts are per 30
 
 
 def line(mid, model, stamp, sid, inp=0, out=0, read=0, w5=0, w1=0, side=False):
@@ -47,12 +49,21 @@ class AnalyzeTest(unittest.TestCase):
 
     def test_subagent_saving_is_opus_minus_sonnet(self):
         _, tips = self.run_it()
-        self.assertAlmostEqual(tips['subagent-model']['saving'], 4.0 - 2.0, places=2)
+        self.assertAlmostEqual(tips['subagent-model']['saving'], (4.0 - 2.0) * X, places=2)
+
+    def test_amounts_are_per_30_days_of_logs(self):
+        r, tips = self.run_it()
+        self.assertEqual(r['history_days'], 10)
+        # a window of 90 days with the same 10 days of logs gives the same amounts
+        r90 = analyze.analyze(self.home, self.home, 90, now=NOW)
+        self.assertEqual({t['id']: t['saving'] for t in r90['tips']}, {t['id']: t['saving'] for t in r['tips']})
 
     def test_cache_backtest(self):
         _, tips = self.run_it()
         # now: 5 + 5 + 0.02 output. 1h: first write 8, second becomes a read 0.2, output 0.02
-        self.assertAlmostEqual(tips['cache-ttl-1h']['saving'], 10.02 - 8.22, places=2)
+        self.assertAlmostEqual(tips['cache-ttl-1h']['saving'], (10.02 - 8.22) * X, places=2)
+        # the reminder about the same rewrites is not offered next to it
+        self.assertNotIn('cache-expiry', tips)
 
     def test_config_tip(self):
         _, tips = self.run_it()
@@ -65,8 +76,8 @@ class AnalyzeTest(unittest.TestCase):
     def test_long_sessions_is_a_reminder_with_skill(self):
         _, tips = self.run_it()
         t = tips['long-sessions']
-        # both 1M-token Opus turns are past 250k: 5 + 5 + 0.02 output
-        self.assertAlmostEqual(t['measured'], 10.02, places=2)
+        # both 1M-token Opus turns are past 250k; only the part above counts: 3/4 of 5 + 5.02
+        self.assertAlmostEqual(t['measured'], 10.02 * 0.75 * X, places=2)
         self.assertEqual(t['kind'], 'reminder')
         self.assertEqual(t['reminder']['at'], 250_000)
         self.assertEqual(t['actions'][0]['op'], 'copy-file')
@@ -89,7 +100,7 @@ class AnalyzeTest(unittest.TestCase):
     def test_opusplan_saves_eleven_percent_of_opus(self):
         _, tips = self.run_it()
         # main sessions: 10.02 on Opus, all of it
-        self.assertAlmostEqual(tips['opusplan']['saving'], 10.02 * 0.11, places=2)
+        self.assertAlmostEqual(tips['opusplan']['saving'], 10.02 * 0.11 * X, places=2)
         # a sonnet default does not hide it when the logs show Opus
         with open(os.path.join(self.home, 'settings.json'), 'w', encoding='utf-8') as f:
             json.dump({'model': 'sonnet'}, f)
@@ -125,6 +136,24 @@ class AnalyzeTest(unittest.TestCase):
         # set to Sonnet, yet the fixture's subagent ran on Opus this week: a check, nothing to apply
         self.assertEqual(tips['subagent-model']['kind'], 'check')
         self.assertEqual(tips['subagent-model']['actions'], [])
+        # set to Opus on purpose: no tip
+        with open(os.path.join(self.home, 'settings.json'), 'w', encoding='utf-8') as f:
+            json.dump({'env': {'CLAUDE_CODE_SUBAGENT_MODEL': 'claude-opus-5-5'}}, f)
+        self.assertNotIn('subagent-model', self.run_it()[1])
+
+    def test_odd_log_lines_and_settings_hide_nothing(self):
+        with open(os.path.join(self.home, 'projects', 'p', 's1.jsonl'), 'a', encoding='utf-8') as f:
+            f.write('["timestamp"]\n"timestamp"\n{"timestamp": 1\n')
+        with open(os.path.join(self.home, 'settings.json'), 'w', encoding='utf-8-sig') as f:
+            json.dump({'env': 'x', 'modelSettings': [], 'permissions': 'y', 'enabledPlugins': None, 'hooks': 3}, f)
+        r, tips = self.run_it()
+        self.assertEqual(r['errors'], [])
+        self.assertIn('opusplan', tips)
+
+    def test_bom_settings_are_read(self):
+        with open(os.path.join(self.home, 'settings.json'), 'w', encoding='utf-8-sig') as f:
+            json.dump({'promptCacheTtl': '1h'}, f)
+        self.assertNotIn('cache-ttl-1h', self.run_it()[1])
 
     def load(self, name):
         import importlib.util
@@ -169,6 +198,98 @@ class AnalyzeTest(unittest.TestCase):
         settings = {'enabledPlugins': {'quiet@m': True, 'busy@m': True, 'hooked@m': True}}
         t = mod.detect(sessions=sessions, settings=settings, home=self.home, days=30)
         self.assertEqual(t['actions'][0]['value'], {'enabledPlugins': {'quiet@m': False}})
+
+    def test_effort_tips(self):
+        calls, _ = analyze.read_calls(self.home, '2026-10-01')
+        calls = [dict(c, t=(0, 1_000_000, 0, 0, 0)) for c in calls if not c['side'] and 'opus' in c['model']]
+        high = self.load('effort-too-high')
+        self.assertIsNone(high.detect(calls=calls, settings={'modelSettings': {'claude-opus-5-5': {'effortLevel': 'medium'}}}))
+        t = high.detect(calls=calls, settings={'modelSettings': {'claude-opus-5-5': {'effortLevel': 'xhigh'}}})
+        # 2 main Opus turns of 1M output at $20: 40; medium writes 1/2.6 of it
+        self.assertAlmostEqual(t['saving'], 40 * (1 - 1 / 2.6), places=2)
+        ignored = self.load('effort-model-settings')
+        self.assertIsNone(ignored.detect(calls=calls, settings={}))
+        t = ignored.detect(calls=calls, settings={'effortLevel': 'high'})
+        self.assertEqual(t['actions'][0]['value'], {'modelSettings': {'claude-opus-5-5': {'effortLevel': 'high'}}})
+        self.assertIsNone(ignored.detect(calls=calls, settings={'effortLevel': 'high',
+                                                                 'modelSettings': {'claude-opus-5-5': {'effortLevel': 'x'}}}))
+
+    def test_output_style_case(self):
+        mod = self.load('output-style-case')
+        self.assertIsNone(mod.detect(settings={'outputStyle': 'Concise'}))
+        self.assertIsNone(mod.detect(settings={'outputStyle': 'Explanatory'}))
+        self.assertEqual(mod.detect(settings={'outputStyle': 'concise'})['actions'][0]['value'], {'outputStyle': 'Concise'})
+
+    def test_always_on_rules_priced_on_this_project(self):
+        mod = self.load('always-on-rules')
+        rules = os.path.join(self.home, '.claude', 'rules')
+        os.makedirs(rules)
+        open(os.path.join(rules, 'big.md'), 'w').write('x' * 40_000)  # 10k tokens, no paths
+        open(os.path.join(rules, 'scoped.md'), 'w').write('---\npaths:\n  - "*.cs"\n---\n' + 'x' * 40_000)
+        calls, _ = analyze.read_calls(self.home, '2026-10-01')
+        calls = [dict(c, cwd=norm(self.home)) for c in calls]
+        t = mod.detect(calls=calls, cwd=self.home)
+        # 10k tokens on 3 main turns: 2 Opus at 0.2, 1 Haiku at 0.01 per 1M
+        self.assertAlmostEqual(t['measured'], 10_000 * (0.2 + 0.2 + 0.01) / 1e6, places=5)
+        self.assertEqual(t['title'], '1 rule in this repo loads on every turn')
+        self.assertIsNone(mod.detect(calls=calls, cwd=os.path.join(self.home, 'projects')))
+
+    def test_rtk_counts_bash_output(self):
+        mod = self.load('rtk')
+        big = {'s': {'bash_chars': 1_000_000, 'bash_calls': 10}}
+        self.assertIn('250,000 tokens', mod.detect(sessions=big, settings={})['problem'])
+        self.assertIsNone(mod.detect(sessions=big, settings={'hooks': {'PreToolUse': [{'command': 'rtk hook'}]}}))
+        self.assertIsNone(mod.detect(sessions={'s': {'bash_chars': 1000, 'bash_calls': 1}}, settings={}))
+
+    def test_slash_only_skills_skips_used_and_marked(self):
+        mod = self.load('slash-only-skills')
+        for n, extra in (('a', ''), ('b', ''), ('used', ''), ('marked', 'disable-model-invocation: true\n')):
+            os.makedirs(os.path.join(self.home, 'skills', n))
+            open(os.path.join(self.home, 'skills', n, 'SKILL.md'), 'w').write(f'---\nname: {n}\ndescription: d\n{extra}---\n')
+        t = mod.detect(sessions={'s': {'skills_used': {'used'}}}, home=self.home, days=30)
+        self.assertEqual(t['choose']['items'], ['a', 'b'])
+
+    def test_unused_mcp_counts_only_this_project(self):
+        mod = self.load('unused-mcp')
+        proj = os.path.join(self.home, 'proj')
+        os.makedirs(os.path.join(proj, '.claude'))
+        json.dump({'mcpServers': {'aspire': {}, 'pw': {}, 'off': {}}}, open(os.path.join(proj, '.mcp.json'), 'w'))
+        json.dump({'enabledMcpjsonServers': ['aspire', 'pw']}, open(os.path.join(proj, '.claude', 'settings.json'), 'w'))
+        # 'off' is approved in ~/.claude.json, which sits next to home
+        claude_json = os.path.join(os.path.dirname(os.path.normpath(self.home)), '.claude.json')
+        self.addCleanup(lambda: os.path.exists(claude_json) and os.remove(claude_json))
+        json.dump({'projects': {proj.replace('\\', '/'): {'enabledMcpjsonServers': ['off']}}}, open(claude_json, 'w'))
+        sessions = {'here': {'cwd': norm(proj), 'mcp_used': {'pw'}},
+                    'elsewhere': {'cwd': norm(self.home), 'mcp_used': {'aspire'}}}
+        t = mod.detect(sessions=sessions, cwd=proj, home=self.home, days=30)
+        self.assertEqual(t['id'], 'unused-mcp:aspire,off')
+        self.assertIn('are switched on', t['problem'])
+
+    def test_unused_user_mcp_skips_denied(self):
+        mod = self.load('unused-user-mcp')
+        claude_json = os.path.join(os.path.dirname(os.path.normpath(self.home)), '.claude.json')
+        self.addCleanup(lambda: os.path.exists(claude_json) and os.remove(claude_json))
+        json.dump({'mcpServers': {'a': {}, 'b': {}, 'c': {}}}, open(claude_json, 'w'))
+        t = mod.detect(sessions={'s': {'mcp_used': {'c'}}}, settings={'deniedMcpServers': [{'serverName': 'b'}]},
+                       home=self.home, days=30)
+        self.assertEqual(t['id'], 'unused-user-mcp:a')
+        self.assertIn('a is set up', t['problem'])
+        self.assertIsNone(mod.detect(sessions={}, settings={'deniedMcpServers': [{'serverName': n} for n in 'abc']},
+                                     home=self.home, days=30))
+
+    def test_playwright_agent_prices_what_later_turns_carry(self):
+        mod = self.load('playwright-agent')
+        calls, _ = analyze.read_calls(self.home, '2026-10-01')
+        sessions = {'s1': {'pw_main': ['2026-10-19T10:00:00Z'] * 10}}
+        t = mod.detect(calls=calls, sessions=sessions, home=self.home, days=30)
+        # 10 results of 2k tokens, each carried into one later Opus turn at 0.2 per 1M: 0.004, under the floor
+        self.assertIsNone(t)
+        sessions = {'s1': {'pw_main': ['2026-10-19T10:00:00Z'] * 10_000}}
+        t = mod.detect(calls=calls, sessions=sessions, home=self.home, days=30)
+        self.assertAlmostEqual(t['saving'], 10_000 * 2_000 * 0.2 / 1e6, places=2)
+        os.makedirs(os.path.join(self.home, 'agents'))
+        open(os.path.join(self.home, 'agents', 'b.md'), 'w').write('---\ntools: mcp__playwright__*\n---\n')
+        self.assertIsNone(mod.detect(calls=calls, sessions=sessions, home=self.home, days=30))
 
     def test_claude_md_import_replaces_only_picked_line(self):
         mod = self.load('claude-md-import')

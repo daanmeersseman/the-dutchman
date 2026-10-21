@@ -102,8 +102,9 @@ class ActionsTest(unittest.TestCase):
         self.assertNotIn('disable', self.read(os.path.join(self.dir, 'b', 'SKILL.md')))
 
     def test_bad_item_is_refused(self):
-        r = actions.apply('s', [{'op': 'copy-file', 'src': 'x', 'dest': '{item}'}], ['../evil'], backups=self.backups)
-        self.assertFalse(r['ok'])
+        for bad in ('../evil', '..', '.', 'a/b'):
+            r = actions.apply('s', [{'op': 'copy-file', 'src': 'x', 'dest': '{item}'}], [bad], backups=self.backups)
+            self.assertFalse(r['ok'], bad)
 
     def test_failure_leaves_nothing_changed(self):
         before = self.read(self.settings)
@@ -113,10 +114,70 @@ class ActionsTest(unittest.TestCase):
         self.assertFalse(r['ok'])
         self.assertEqual(self.read(self.settings), before)
 
-    def test_undo_refuses_after_later_edit(self):
-        actions.apply('t', [{'op': 'json-merge', 'file': self.settings, 'value': {'x': 1}}], backups=self.backups)
-        open(self.settings, 'a').write(' ')
-        self.assertFalse(actions.undo('t', backups=self.backups)['ok'])
+    def test_undo_refuses_after_later_edit_of_a_text_file(self):
+        md = os.path.join(self.dir, 'CLAUDE.md')
+        open(md, 'w').write('@RTK.md\n')
+        actions.apply('l', [{'op': 'line-replace', 'file': md, 'find': '@RTK.md', 'replace': 'x'}], backups=self.backups)
+        open(md, 'a').write('more\n')
+        self.assertFalse(actions.undo('l', backups=self.backups)['ok'])
+        self.assertEqual(self.read(md), 'x\nmore\n')
+
+    def test_undo_after_a_second_tip_keeps_the_second(self):
+        a = [{'op': 'json-merge', 'file': self.settings, 'value': {'promptCacheTtl': '1h', 'env': {'X': '1'}}}]
+        b = [{'op': 'json-merge', 'file': self.settings, 'value': {'model': 'opusplan', 'env': {'Y': '2'}}},
+             {'op': 'json-list', 'file': self.settings, 'key': 'denied', 'add': ['p']}]
+        self.assertTrue(actions.apply('a', a, backups=self.backups)['ok'])
+        self.assertTrue(actions.apply('b', b, backups=self.backups)['ok'])
+        self.assertTrue(actions.undo('a', backups=self.backups)['ok'])
+        self.assertEqual(json.loads(self.read(self.settings)),
+                         {'env': {'A': '1', 'Y': '2'}, 'model': 'opusplan', 'denied': ['p']})
+        # Claude Code adds a key and an item of its own; b still undoes, its list item goes, the other stays
+        data = json.loads(self.read(self.settings))
+        data['theme'] = 'dark'
+        data['denied'].append('q')
+        actions.write_json(self.settings, data)
+        self.assertTrue(actions.undo('b', backups=self.backups)['ok'])
+        self.assertEqual(json.loads(self.read(self.settings)),
+                         {'env': {'A': '1'}, 'model': 'opus', 'theme': 'dark', 'denied': ['q']})
+
+    def test_undo_refuses_when_its_own_key_changed(self):
+        actions.apply('t', [{'op': 'json-merge', 'file': self.settings, 'value': {'model': 'sonnet'}}], backups=self.backups)
+        actions.write_json(self.settings, {'env': {'A': '1'}, 'model': 'haiku'})
+        r = actions.undo('t', backups=self.backups)
+        self.assertFalse(r['ok'])
+        self.assertIn('model', r['message'])
+        self.assertEqual(json.loads(self.read(self.settings))['model'], 'haiku')
+
+    def test_undo_removes_objects_it_created(self):
+        actions.apply('t', [{'op': 'json-merge', 'file': self.settings,
+                             'value': {'modelSettings': {'claude-opus-5-5': {'effortLevel': 'medium'}}}}], backups=self.backups)
+        data = json.loads(self.read(self.settings))
+        data['other'] = 1
+        actions.write_json(self.settings, data)
+        self.assertTrue(actions.undo('t', backups=self.backups)['ok'])
+        self.assertEqual(json.loads(self.read(self.settings)), {'env': {'A': '1'}, 'model': 'opus', 'other': 1})
+
+    def test_bom_and_nested_null(self):
+        with open(self.settings, 'w', encoding='utf-8-sig') as f:
+            json.dump({'model': 'opus'}, f)
+        r = actions.apply('t', [{'op': 'json-merge', 'file': self.settings, 'value': {'env': {'A': None, 'B': '1'}}}],
+                          backups=self.backups)
+        self.assertTrue(r['ok'], r)
+        self.assertEqual(json.loads(self.read(self.settings)), {'model': 'opus', 'env': {'B': '1'}})
+
+    def test_copy_into_existing_folder_keeps_it(self):
+        src = os.path.join(self.dir, 'src.md')
+        open(src, 'w').write('hi')
+        folder = os.path.join(self.dir, 'agents')
+        os.makedirs(folder)
+        actions.apply('c', [{'op': 'copy-file', 'src': src, 'dest': os.path.join(folder, 'a.md')}], backups=self.backups)
+        actions.undo('c', backups=self.backups)
+        self.assertTrue(os.path.isdir(folder))
+
+    def test_json_list_refuses_a_non_list(self):
+        actions.write_json(self.settings, {'denied': 'x'})
+        r = actions.apply('t', [{'op': 'json-list', 'file': self.settings, 'key': 'denied', 'add': ['y']}], backups=self.backups)
+        self.assertFalse(r['ok'])
 
     def test_invalid_json_is_not_overwritten(self):
         open(self.settings, 'w').write('{broken')

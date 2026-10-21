@@ -4,6 +4,8 @@ Usage: python actions.py apply <tip-id> [--items a,b] [--dry | --plan]    (the t
        python actions.py undo <tip-id>
 Prints JSON: {"ok": bool, "message": str}. With --dry nothing is written; the message is the diff it would make.
 With --plan nothing is written either; the message is a short list of the lines each file gains or loses.
+Undo puts a file back byte for byte when nothing touched it since. A JSON file changed since (by another tip, or by
+Claude Code itself) gets only this tip's keys back, as long as nobody changed those keys.
 
 Actions (paths absolute or with ~; "{item}" is replaced by each chosen item):
   {"op": "json-merge", "file", "value"}             deep-merge an object into a JSON file; a null value removes the key
@@ -14,8 +16,11 @@ Actions (paths absolute or with ~; "{item}" is replaced by each chosen item):
 """
 import argparse, difflib, hashlib, json, os, re, shutil, sys, tempfile
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from tiplib import ITEM  # noqa: E402
+
 BACKUPS = os.path.expanduser(os.path.join('~', '.claude', 'dutchman', 'backups'))
-ITEM = re.compile(r'^[\w.-]+$')  # items become path parts: no separators, no ..
+MISSING = object()
 
 
 def norm(path):
@@ -32,24 +37,33 @@ def sha(path):
 def read_json(path):
     if not os.path.exists(path):
         return {}
-    with open(path, encoding='utf-8') as f:
+    with open(path, encoding='utf-8-sig') as f:
         text = f.read()
-    return json.loads(text) if text.strip() else {}  # invalid JSON raises: nothing is written
+    data = json.loads(text) if text.strip() else {}  # invalid JSON raises: nothing is written
+    if not isinstance(data, dict):
+        raise ValueError(f'{path} does not hold a JSON object')
+    return data
+
+
+def write(path, text):
+    """Write through a temporary file, so an interrupted write leaves the old file whole."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + '.dutchman-tmp'
+    with open(tmp, 'w', encoding='utf-8', newline='') as f:
+        f.write(text)
+    os.replace(tmp, path)
 
 
 def write_json(path, data):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, 'w', encoding='utf-8', newline='\n') as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-        f.write('\n')
+    write(path, json.dumps(data, indent=2, ensure_ascii=False) + '\n')
 
 
 def merge(dst, src):
     for k, v in src.items():
         if v is None:
             dst.pop(k, None)
-        elif isinstance(v, dict) and isinstance(dst.get(k), dict):
-            merge(dst[k], v)
+        elif isinstance(v, dict):
+            dst[k] = merge(dst[k] if isinstance(dst.get(k), dict) else {}, v)  # a null inside a new object is dropped too
         else:
             dst[k] = v
     return dst
@@ -65,8 +79,7 @@ def frontmatter_set(path, key, value):
     head, line = m.group(1), f'{key}: {value}'
     rx = re.compile(rf'^{re.escape(key)}:.*?(?=\r?$)', re.M)
     head = rx.sub(line, head) if rx.search(head) else head + eol + line
-    with open(path, 'w', encoding='utf-8', newline='') as f:
-        f.write(text[:m.start(1)] + head + text[m.end(1):])
+    write(path, text[:m.start(1)] + head + text[m.end(1):])
 
 
 def run(a):
@@ -77,7 +90,10 @@ def run(a):
     elif op == 'json-list':
         f = norm(a['file'])
         data = read_json(f)
-        lst = [x for x in data.get(a['key']) or [] if x not in a.get('remove', [])]
+        old = data.get(a['key'], [])
+        if not isinstance(old, list):
+            raise ValueError(f'{a["key"]} in {f} is not a list')
+        lst = [x for x in old if x not in a.get('remove', [])]
         lst += [x for x in a.get('add', []) if x not in lst]
         data[a['key']] = lst
         write_json(f, data)
@@ -94,8 +110,7 @@ def run(a):
             raise ValueError(f'{a["find"]!r} is not a line in {f}')
         for i in hit:
             lines[i] = a['replace'] + lines[i][len(lines[i].rstrip('\r\n')):]
-        with open(f, 'w', encoding='utf-8', newline='') as fh:
-            fh.write(''.join(lines))
+        write(f, ''.join(lines))
     elif op == 'frontmatter-set':
         frontmatter_set(norm(a['file']), a['key'], a['value'])
     else:
@@ -120,16 +135,78 @@ def target(a):
     return norm(a.get('file') or a['dest'])
 
 
-def restore(manifest, d):
-    for m in manifest:
-        if m['backup']:
-            shutil.copyfile(os.path.join(d, m['backup']), m['file'])
-        elif os.path.exists(m['file']):
-            os.remove(m['file'])
+def restore(m, d):
+    if m['backup']:
+        shutil.copyfile(os.path.join(d, m['backup']), m['file'])
+    elif os.path.exists(m['file']):
+        os.remove(m['file'])
+        if m.get('made_dir'):
             try:
-                os.rmdir(os.path.dirname(m['file']))  # only when empty, e.g. a skill folder we created
+                os.rmdir(os.path.dirname(m['file']))  # only when empty, e.g. a skill folder this tip created
             except OSError:
                 pass
+
+
+def get(d, path):
+    for k in path:
+        if not isinstance(d, dict) or k not in d:
+            return MISSING
+        d = d[k]
+    return d
+
+
+def put(d, path, v):
+    for k in path[:-1]:
+        d = d.setdefault(k, {})
+        if not isinstance(d, dict):
+            raise ValueError('.'.join(path) + ' sits under a value that is not an object')
+    d[path[-1]] = v
+
+
+def drop(d, path, before):
+    """Remove path, and the objects above it that this tip created and that are now empty."""
+    parents = [d]
+    for k in path[:-1]:
+        parents.append(parents[-1].get(k) if isinstance(parents[-1], dict) else None)
+    if isinstance(parents[-1], dict):
+        parents[-1].pop(path[-1], None)
+    for i in range(len(path) - 1, 0, -1):
+        if parents[i] == {} and get(before, path[:i]) is MISSING:
+            parents[i - 1].pop(path[i - 1], None)
+
+
+def changes(before, after, path=()):
+    """The paths where after differs from before; objects are walked into, everything else is one value."""
+    if isinstance(before, dict) and isinstance(after, dict):
+        return [p for k in dict.fromkeys([*before, *after])
+                for p in changes(before.get(k, MISSING), after.get(k, MISSING), path + (k,))]
+    return [] if before == after else [path]
+
+
+def unmerge(m, d):
+    """Put back only what this tip changed in a JSON file that changed since. Raises when one of those keys changed too."""
+    before = read_json(os.path.join(d, m['backup'])) if m['backup'] else {}
+    after = read_json(os.path.join(d, m['after_copy']))
+    now = read_json(m['file'])
+    for path in changes(before, after):
+        b, a, c = get(before, path), get(after, path), get(now, path)
+        if isinstance(a, list) and isinstance(c, list):  # a list: take out what the tip added, put back what it removed
+            old = b if isinstance(b, list) else []
+            new = [x for x in c if x in old or x not in a] + [x for x in old if x not in a and x not in c]
+            if b is MISSING and not new:
+                drop(now, path, before)
+            else:
+                put(now, path, new)
+        elif c != a:
+            raise ValueError(f'{".".join(path)} in {short(m["file"])} changed since')
+        elif b is MISSING:
+            drop(now, path, before)
+        else:
+            put(now, path, b)
+    if not now and not m['backup']:
+        os.remove(m['file'])
+    else:
+        write_json(m['file'], now)
 
 
 def folder(tip_id, backups):
@@ -220,19 +297,30 @@ def apply(tip_id, actions, items=(), backups=BACKUPS, dry=False, show=False):
         backup = str(i) if os.path.exists(f) else None
         if backup:
             shutil.copyfile(f, os.path.join(d, backup))
-        manifest.append({'file': f, 'backup': backup})
+        manifest.append({'file': f, 'backup': backup, 'made_dir': not os.path.isdir(os.path.dirname(f))})
+    save_manifest(d, manifest)  # first: if Apply is cut off halfway, Undo still finds the backups
     try:
         for a in steps:
             run(a)
     except Exception as e:  # leave nothing half-done
-        restore(manifest, d)
+        for m in manifest:
+            restore(m, d)
         shutil.rmtree(d, ignore_errors=True)
         return {'ok': False, 'message': f'Nothing changed: {e}'}
-    for m in manifest:
+    for i, m in enumerate(manifest):
         m['after'] = sha(m['file'])
-    with open(os.path.join(d, 'manifest.json'), 'w', encoding='utf-8') as f:
+        if any(a['op'] in ('json-merge', 'json-list') and target(a) == m['file'] for a in steps):
+            m['after_copy'] = f'{i}.after'
+            shutil.copyfile(m['file'], os.path.join(d, m['after_copy']))
+    save_manifest(d, manifest)
+    return {'ok': True, 'message': 'Changed: ' + ', '.join(map(short, files)) + '.'}
+
+
+def save_manifest(d, manifest):
+    tmp = os.path.join(d, 'manifest.tmp')
+    with open(tmp, 'w', encoding='utf-8') as f:
         json.dump(manifest, f, indent=2)
-    return {'ok': True, 'message': 'Changed: ' + ', '.join(files)}
+    os.replace(tmp, os.path.join(d, 'manifest.json'))
 
 
 def undo(tip_id, backups=BACKUPS):
@@ -242,12 +330,24 @@ def undo(tip_id, backups=BACKUPS):
             manifest = json.load(f)
     except OSError:
         return {'ok': False, 'message': 'No backup of this tip, so nothing to undo.'}
-    changed = [m['file'] for m in manifest if sha(m['file']) != m['after']]
-    if changed:  # restoring would throw away edits made after the tip
-        return {'ok': False, 'message': f'Not undone: {", ".join(changed)} changed since. The backup is in {d}.'}
-    restore(manifest, d)
+    # A JSON file changed since gets only this tip's keys back; any other file changed since blocks Undo, because
+    # restoring it would throw away the later edits. No 'after' means Apply was cut off: the backup is the state to keep.
+    later = [m for m in manifest if 'after' in m and sha(m['file']) != m['after']]
+    blocked = [m['file'] for m in later if 'after_copy' not in m]
+    if blocked:
+        return {'ok': False, 'message': f'Not undone: {", ".join(map(short, blocked))} changed since. The backup is in {d}.'}
+    try:
+        for m in later:
+            read_json(m['file'])  # every file must still read before any is changed
+        for m in manifest:
+            if m in later:
+                unmerge(m, d)
+            else:
+                restore(m, d)
+    except (ValueError, OSError) as e:
+        return {'ok': False, 'message': f'Not undone: {e}. The backup is in {d}.'}
     shutil.rmtree(d, ignore_errors=True)
-    return {'ok': True, 'message': 'Restored: ' + ', '.join(m['file'] for m in manifest)}
+    return {'ok': True, 'message': 'Restored: ' + ', '.join(short(m['file']) for m in manifest) + '.'}
 
 
 if __name__ == '__main__':

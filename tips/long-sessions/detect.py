@@ -21,24 +21,24 @@ def detect(calls, sessions, home, settings, context_limit, **_):
     else:
         do = '/handover, then /clear, then /handover resume'
     tip = {
-        'id': 'long-sessions', 'kind': 'reminder', 'category': 'Sessions', 'confidence': 'measured',
-        'title': f'Get a nudge when a session passes {k}',
+        'id': 'long-sessions', 'kind': 'reminder', 'confidence': 'measured',
+        'title': f'Get a nudge when a session passes {k} tokens',
         'saving': None, 'measured': over,
-        'problem': f'Every turn re-sends the whole conversation. {n_sess} of your sessions grew past {k} tokens; '
-                   f'their {turns} turns past that point cost ${over:.2f}. Claude also compacted automatically {autos} times, '
-                   'which summarises at a moment you did not choose and can drop details.',
-        'how': f'Once a session passes {k} tokens, a toast says so, once, and again at every 150k more. Then finish the '
+        'problem': f'Every turn sends the whole conversation again. {n_sess} of your sessions grew past {k} tokens. On '
+                   f'their {turns} turns after that, the part above {k} cost ${over:.2f}. Claude also compacted on its own '
+                   f'{autos} times, which summarizes at a moment you did not choose and can drop details.',
+        'how': f'Once a session passes {k} tokens, a notice says so, and again at every 150k more. Then finish the '
                f'task, or carry it into a small session: {do}. Do it before the cache expires (5 minutes idle, 1 hour '
                'with the 1-hour cache), when reading the context is cheapest.',
         'assumption': 'How much it saves depends on how long those sessions would have run on, so no amount is promised.',
         'reminder': {'id': 'context-size', 'at': context_limit, 'every': 150_000,
-                     'text': f'Context is {{k}}k tokens, and every turn re-sends all of it. Finish this task, or: {do}.'},
+                     'text': f'Context is {{k}}k tokens, and every turn sends all of it again. Finish this task, or: {do}.'},
         'change': 'Turns on the reminder in this plugin. Nothing else changes.',
-        'actions': [], 'restart': False, 'guide': '4',
+        'actions': [], 'restart': False,
     }
     if not frugal and not has_skill:
-        tip['change'] = ('Turns on the reminder, and installs the /handover skill from the cost guide (appendix A1; '
-                         'not built into Claude Code) in ~/.claude/skills/handover/SKILL.md. It runs only when you type '
+        tip['change'] = ('Turns on the reminder, and installs a /handover skill in ~/.claude/skills/handover/SKILL.md, '
+                         'because Claude Code has none built in. It runs only when you type '
                          '/handover, so it adds nothing to your context otherwise. Handovers go to ~/.claude/handovers/, '
                          'outside your repos, in the same format as /frugal restart from the Frugalitas plugin.')
         tip['actions'] = [{'op': 'copy-file', 'src': SKILL, 'dest': '~/.claude/skills/handover/SKILL.md'}]

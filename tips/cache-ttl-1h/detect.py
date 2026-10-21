@@ -29,16 +29,16 @@ def detect(calls, settings, **_):
     if save < MIN_USD:
         return None
     return {
-        'id': 'cache-ttl-1h', 'kind': 'fix', 'category': 'Cache', 'confidence': 'exact',
-        'title': 'Keep the cache warm for an hour instead of 5 minutes',
+        'id': 'cache-ttl-1h', 'kind': 'fix', 'confidence': 'exact',
+        'title': 'Keep the cache warm for an hour',
         'saving': save, 'measured': now,
         'problem': f'Claude caches your conversation so the next turn reads it cheaply. The cache lasts 5 minutes. '
                    f'{rewrites} times you (or Claude, waiting on a build or your approval) paused 5 to 60 minutes, and '
                    f'the whole conversation was written to the cache again at full price.',
-        'how': 'With a 1-hour cache those pauses stay cheap. Each cache write costs more (2x instead of 1.25x the input '
-               f'price). Replaying your own last sessions with a 1-hour cache: ${then:.2f} instead of ${now:.2f}.',
+        'how': 'With a 1-hour cache those pauses stay cheap. Writing to it costs a little more: 2x the input price '
+               f'instead of 1.25x. Your own sessions, replayed with a 1-hour cache: ${then:.2f} instead of ${now:.2f}.',
         'assumption': None,
         'change': 'Adds "promptCacheTtl": "1h" to ~/.claude/settings.json.',
         'actions': [{'op': 'json-merge', 'file': '~/.claude/settings.json', 'value': {'promptCacheTtl': '1h'}}],
-        'min_version': '2.1.242', 'restart': True, 'guide': '5.1',
+        'min_version': '2.1.242', 'restart': True,
     }

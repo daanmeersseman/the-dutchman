@@ -19,9 +19,9 @@ much. One click applies the fix, and one click undoes it.
 
 ## Why
 
-Most of a Claude Code bill is not the work itself. It is the context sent again on every turn, a cache that expired
-while you read, a helper agent on the most expensive model, a session that kept growing. Each of these is a setting or
-a habit, and each one is easy to fix once you can see it.
+Much of a Claude Code bill goes to what surrounds the work: the context sent again on every turn, a cache that
+expired while you read, a subagent on the most expensive model, a session that kept growing. Each of these is a
+setting or a habit, and each one is easy to fix once you can see it.
 
 The Dutchman shows which ones apply to *you*, priced on your own sessions.
 
@@ -37,19 +37,20 @@ The Dutchman shows which ones apply to *you*, priced on your own sessions.
 │                                                                            │
 │ FIXES                                                                      │
 │ ▾ Let Opus plan and Sonnet do the work                             ~$57/mo │
-│     Why      Your main sessions ran on Opus for planning and doing         │
-│              alike: $520 of $590.                                          │
+│     Why      Your sessions ran on Opus for planning and doing alike:       │
+│              $520 of $590, not counting subagents.                         │
 │     How      With "opusplan", Opus writes the plan; after you approve      │
 │              it, Sonnet carries it out at about half the price.            │
-│     Saving   about $57 per month at list price.                            │
-│     Changes  Sets "model": "opusplan" in ~/.claude/settings.json.          │
+│     Saving   About $57 per month at list price.                            │
+│     Changes  Sets "model": "opusplan" in ~/.claude/settings.json           │
+│              (now "sonnet"). Every file is backed up first.                │
 │                                                                            │
-│     [ Apply ]  [ What will this do for me? ]  [ Dismiss ]       Guide §6.2 │
+│     [ Apply ]  [ Show the change ]  [ Dismiss ]                            │
 │                                                                            │
-│ ▸ Turn off MCP server you never use here: aspire                           │
+│ ▸ Turn off the MCP server you never use here: aspire                       │
 │                                                                            │
 │ REMINDERS                                                                  │
-│ ▸ Get a nudge when a session passes 250k                            $91/mo │
+│ ▸ Get a nudge when a session passes 250k tokens                     $91/mo │
 │ ▸ Get a nudge when you resume a big session                         $28/mo │
 │                                                                            │
 │ CHECKS                                                                     │
@@ -59,27 +60,27 @@ The Dutchman shows which ones apply to *you*, priced on your own sessions.
 ```
 
 A `~` amount is what the fix saves. An amount without `~` is what the problem cost you; the reminder or check helps
-you act on it. **What will this do for me?** shows what Apply changes, before anything is written:
+you act on it. **Show the change** lists what Apply changes, before anything is written:
 
 ```
 ~/.claude/settings.json
   model: "sonnet" → "opusplan"
-Backed up first to ~/.claude/dutchman/backups. Undo puts it back.
 ```
 
 ## How it works
 
-1. **At session start** The Dutchman reads your logs in `~/.claude/projects` and your settings, in the background. By
-   default it reads the last 30 days, at most once a day.
-2. **A pane opens** with the tips that apply to you, grouped as fixes, reminders and checks.
+1. **At session start**, The Dutchman reads your settings and your logs in `~/.claude/projects`, in the background.
+   By default it reads the last 30 days, at most once a day.
+2. **By default a pane opens** with the tips that apply to you, grouped as fixes, reminders and checks.
 3. **Open a tip** to see what was found in your logs, how the fix works and what the amount assumes.
 4. **Apply** (or **Turn on** for a reminder) makes the change without calling a model. Every file is backed up first.
-   The tip moves to **Applied & dismissed**, where **Undo** puts the file back. Undo refuses if you edited the file
-   since.
+   The tip moves to **Applied & dismissed**, where **Undo** puts the file back. If a settings file changed since, Undo
+   puts back only what this tip changed, and refuses when you changed that same setting yourself.
 
 ## The tips
 
-A tip shows only when your own logs show the problem, and only after 7 days of logs.
+A tip shows only when your own logs show the problem, and only after 7 days of logs. Amounts are per month: with
+fewer than 30 days of logs, they are scaled up from the days there are.
 
 **Fixes** change a setting or a file. One click, one click back.
 
@@ -92,14 +93,14 @@ A tip shows only when your own logs show the problem, and only after 7 days of l
 | **Ignored effort setting** | Moves an effort setting to where Opus reads it | setting |
 | **Concise output** | Sets the Concise output style when none is set | estimate |
 | **Output style spelling** | Fixes an output style that is not active because of its spelling | setting |
-| **Autocompact window** | Replaces a low autocompact percentage with a fixed window of 300k tokens | setting |
+| **Auto-compact window** | Replaces a low auto-compact percentage with a fixed window of 300k tokens | setting |
 | **Browser agent** | Adds a Sonnet subagent for Playwright, so screenshots stay out of the main session | estimate |
-| **CLAUDE.md imports** | Turns a big `@file` import in your user CLAUDE.md into a line Claude reads only when needed | measured |
+| **CLAUDE.md imports** | Turns an `@file` import in your user CLAUDE.md into a line Claude reads only when needed | measured |
 | **Unused MCP servers** | Turns off MCP servers you never call, in this project or in your user config | count |
 | **Unused plugins** | Disables plugins whose skills, commands and agents you never use | count |
 | **Idle skills** | Makes skills Claude never picks load only when you type `/name` | count |
 
-**Reminders** are toasts at the moment a habit starts to cost money.
+**Reminders** are notices at the moment a habit starts to cost money.
 
 | Tip | When it nudges you | Amount |
 |---|---|---|
@@ -112,12 +113,12 @@ A tip shows only when your own logs show the problem, and only after 7 days of l
 | Tip | What it points out | Amount |
 |---|---|---|
 | **Always-on rules** | Project rules without a path scope, loaded on every turn | measured |
-| **Command output** | Shell output that fills your context; suggests RTK | measured |
-| **Subagent model not applied** | `CLAUDE_CODE_SUBAGENT_MODEL` is set, yet helper agents still ran on Opus | measured |
+| **Command output** | Shell output that fills your context; suggests RTK | count |
+| **Subagent model not applied** | `CLAUDE_CODE_SUBAGENT_MODEL` is set, yet subagents still ran on Opus | measured |
 
 *Exact* replays your own calls with the change. *Estimate* rests on one assumption, shown with the tip. *Measured* is
-what the problem cost you, without promising what a fix saves. *Setting* and *count* fix something that is plainly
-wrong or unused, so there is no amount.
+what the problem cost you, without promising what a fix saves. *Setting* and *count* carry no amount: the tip names a
+setting that is wrong, or counts what goes unused.
 
 ## Settings
 
@@ -126,12 +127,12 @@ On first start the pane asks four things, with the recommended answer picked. Pr
 | Question | Options | Recommended |
 |---|---|---|
 | Show tips from | $1, $5, $20 per month, or any | **$5** |
-| Open tips at session start | open the pane, a notice, or quiet until you type `/dutchman` | **open the pane** |
+| At session start | open the pane, show a notice, or do nothing until you type `/dutchman` | **open the pane** |
 | Show them at most | every session, daily, weekly, monthly | **weekly** |
-| Nudge past | 150k, 250k, 400k tokens in one session, or never | **250k** |
+| Nudge when a session passes | 150k, 250k, 400k tokens, or off | **250k** |
 
 The **Settings** tab holds these too, plus how many days of logs to read (14, 30 or 90), how often to read them again
-(daily, weekly, or only on Refresh) and from what monthly cost the cache reminders are offered ($5, $20 or never).
+(daily, weekly, or only on Refresh) and from what monthly cost the cache reminders are offered ($5, $20 or off).
 
 | Command | |
 |---|---|
@@ -153,7 +154,7 @@ usage limit a habit takes. Backups of every file Apply changes live in `~/.claud
 
 ## The guide
 
-Every tip links to a section of [the cost guide](docs/guide.md): how Claude Code is billed, what the cache does, which
+[The cost guide](docs/guide.md) behind these tips explains how Claude Code is billed, what the cache does, which
 model fits which work, and how to keep sessions small.
 
 ## Contributing

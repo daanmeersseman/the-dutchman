@@ -2,7 +2,7 @@
   "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
   "name": "dutchman",
   "version": "0.1.0",
-  "description": "Cost-saving fixes and reminders for Claude Code, measured on your own session logs",
+  "description": "Cost-saving tips for Claude Code, priced on your own session logs.",
   "author": {
     "name": "daanmeersseman",
     "url": "https://github.com/daanmeersseman"

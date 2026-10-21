@@ -1,5 +1,5 @@
 """Bash output that enters the context unfiltered. Measured from the tool results in the logs."""
-import json, shutil
+import shutil
 
 from tiplib import has_hook
 
@@ -14,14 +14,14 @@ def detect(sessions, settings, **_):
         return None
     installed = shutil.which('rtk') is not None
     return {
-        'id': 'rtk', 'kind': 'check', 'category': 'Context', 'confidence': 'measured',
+        'id': 'rtk', 'kind': 'check', 'confidence': 'config',
         'title': 'Condense command output before it enters the context',
         'saving': None, 'measured': None,
         'problem': f'{calls:,} Bash commands put about {toks:,} tokens of output into your conversations (builds, '
                    'tests, git, grep). Every later turn of that session reads it again.',
-        'how': 'RTK is a hook that condenses that output (errors and signal kept, noise dropped) before Claude sees '
-               'it. Measured for the guide: command output -73%.',
-        'assumption': 'Re-read about 30 times on average for the guide; the saving depends on your commands.',
-        'change': None, 'actions': [], 'restart': False, 'guide': '7.1',
+        'how': 'RTK is a hook that condenses that output before Claude sees it. It keeps errors and signal and drops '
+               'the noise. In a measured test it cut command output by 73%.',
+        'assumption': 'In that test each output was read again about 30 times. The saving depends on your commands.',
+        'change': None, 'actions': [], 'restart': False,
         'next': 'Run: rtk init -g' if installed else 'Install RTK, then run: rtk init -g',
     }

@@ -1,10 +1,9 @@
 """@imports in your personal CLAUDE.md load the whole file on every turn; a plain path lets Claude read it when needed."""
 import os, re
 
-from tiplib import MIN_USD, main_turns, read_price
+from tiplib import ITEM, MIN_USD, main_turns, read_price
 
 IMPORT = re.compile(r'^@(\S+)\s*$', re.M)
-ITEM = re.compile(r'^[\w.-]+$')  # actions.py only takes plain names as items
 
 
 def detect(calls, home, days, **_):
@@ -27,12 +26,12 @@ def detect(calls, home, days, **_):
         return None
     names = ', '.join(r for r, _ in found)
     return {
-        'id': 'claude-md-import', 'kind': 'fix', 'category': 'Fixed cost', 'confidence': 'measured',
-        'title': f'Your CLAUDE.md imports {names} into every turn',
+        'id': 'claude-md-import', 'kind': 'fix', 'confidence': 'measured',
+        'title': f'Load {names} only when Claude needs it',
         'saving': None, 'measured': paid,
         'problem': f'~/.claude/CLAUDE.md pulls in {names} with @, so about {toks:,} tokens load on every turn of every '
-                   f'session: ${paid:.2f} in {days} days, read from cache.',
-        'how': 'A line that names the file instead ("Read RTK.md when the task needs it.") costs a few tokens. Claude '
+                   f'session: ${paid:.2f} in {days} days, at the cache price.',
+        'how': 'A line that names the file ("Read RTK.md when the task needs it.") costs a few tokens, and Claude '
                'opens the file when it is relevant.',
         'assumption': 'Claude will not always open the file when it would have helped. Keep the @ for rules that must hold '
                       'on every turn.',
@@ -41,5 +40,5 @@ def detect(calls, home, days, **_):
         'choose': {'question': 'Which imports may Claude read only when needed?', 'items': [r for r, _ in found]},
         'actions': [{'op': 'line-replace', 'file': path, 'find': '@{item}',
                      'replace': 'Read ~/.claude/{item} when the task needs it.'}],
-        'restart': True, 'guide': '3.2',
+        'restart': True,
     }

@@ -1,17 +1,19 @@
 import { atom, read, update } from 'claude-code'
 import type { Hook, Register } from 'claude-code'
 
+import { idleBeforeExpiry, money, noticeText, older, plural, reached } from './logic'
 import type { Config, Reminder, Result, State, Status, Tip, View } from '../types'
 
 type Api = Parameters<Hook<'session.start'>>[0]
 type Outcome = { ok: boolean; message: string }
+type Run = { out: string } | { error: string; missing: boolean }
 
-// Test mode: analyse and announce the tips at every session start; Apply shows the diff and writes nothing.
+// Test mode: analyze and announce the tips at every session start; Apply shows the diff and writes nothing.
 const DRY = false
 const DAY = 86_400_000
 const PANE = 'dutchman'
 const TITLE = 'The Dutchman'
-const RESULT = 'result-v5' // bump when the tip shape changes, so an old cached result is not shown
+const RESULT = 'result-v6' // bump when the tip shape changes, so an old cached result is not shown
 const STATE = 'state-v2'
 const CONFIG = 'config-v1'
 const ANNOUNCED = 'announced-at'
@@ -28,18 +30,22 @@ const view = atom({ plugin: 'dutchman', key: 'view' } as const, {
   result: null, state: {}, open: null, busy: null, message: null, preview: null, plan: null, tab: 'open', config: DEFAULTS, setup: null,
 } as View)
 
-const money = (n: number) => `$${n < 10 ? n.toFixed(2) : Math.round(n)}`
-
 // ---------- state ----------
 
-async function setStatus($: Api, id: string, status: Status['status'] | undefined, tip?: Tip): Promise<void> {
-  const state = ((await $.store.get(STATE)) ?? {}) as State
-  if (status) state[id] = { status, at: await $.clock.now(), ...(tip ? { tip } : {}) }
-  else delete state[id]
-  await $.store.set(STATE, state)
-  await update($, view, v => ({ ...v, state }))
-  if (status === 'applied' && tip?.reminder) reminders.set(tip.reminder.id, tip.reminder)
-  if (!status && tip?.reminder) reminders.delete(tip.reminder.id)
+// One change at a time: two quick clicks each read the state, and the second write would drop the first.
+let statusQueue: Promise<void> = Promise.resolve()
+
+function setStatus($: Api, id: string, status: Status['status'] | undefined, tip?: Tip): Promise<void> {
+  statusQueue = statusQueue.catch(() => {}).then(async () => {
+    const state = ((await $.store.get(STATE)) ?? {}) as State
+    if (status) state[id] = { status, at: await $.clock.now(), ...(tip ? { tip } : {}) }
+    else delete state[id]
+    await $.store.set(STATE, state)
+    await update($, view, v => ({ ...v, state }))
+    if (status === 'applied' && tip?.reminder) reminders.set(tip.reminder.id, tip.reminder)
+    if (!status && tip?.reminder) reminders.delete(tip.reminder.id)
+  })
+  return statusQueue
 }
 
 const say = ($: Api, patch: Partial<View>) => update($, view, v => ({ ...v, busy: null, isError: false, ...patch }))
@@ -48,7 +54,7 @@ const say = ($: Api, patch: Partial<View>) => update($, view, v => ({ ...v, busy
 
 const getConfig = async ($: Api): Promise<Config> => ({ ...DEFAULTS, ...(((await $.store.get(CONFIG)) ?? {}) as Partial<Config>) })
 
-// Saves the change; analyses again when it changes what the analysis finds.
+// Saves the change; analyzes again when it changes what the analysis finds.
 async function setConfig($: Api, patch: Partial<Config>): Promise<void> {
   const old = await getConfig($)
   const config = { ...old, ...patch }
@@ -62,30 +68,52 @@ const worth = (t: Tip, c: Config) => (t.saving ?? t.measured ?? Infinity) >= c.m
 
 // ---------- python ----------
 
-// Runs a script of the plugin with python, else python3. Undefined when neither runs it.
-async function python($: Api, args: string[], stdin?: string): Promise<string | undefined> {
+// Runs a script of the plugin and parses its JSON. python3 is tried only when there is no python: a script that
+// fails under python would fail the same way under python3, and take as long again.
+// 9009 and 127: the shell's "command not found" (9009 is the Windows Store alias when Python is not installed).
+async function python($: Api, args: string[], stdin?: string): Promise<Run> {
+  let error = 'Python 3 is not on the PATH as python or python3.'
   for (const py of ['python', 'python3']) {
     try {
       const r = await $.process.run([py, '-I', ...args], { timeoutMs: 300_000, ...(stdin ? { stdin } : {}) })
-      if (r.exitCode === 0) return r.stdout
+      if (r.exitCode === 0) return { out: r.stdout }
       $.ui.log(`dutchman: ${py} exited ${r.exitCode}: ${r.stderr.slice(-500)}`, { to: 'debug' })
+      if (r.exitCode !== 9009 && r.exitCode !== 127)
+        return { error: r.stderr.trim().split('\n').pop() || `${py} exited with code ${r.exitCode}.`, missing: false }
     } catch (err) {
       $.ui.log(`dutchman: ${py}: ${String(err)}`, { to: 'debug' })
     }
   }
-  return undefined
+  return { error, missing: true }
 }
 
-async function analyze($: Api): Promise<Result | undefined> {
+function parse<T>(r: Run): T | string {
+  if ('error' in r) return r.error
+  try {
+    return JSON.parse(r.out) as T
+  } catch {
+    return 'The script printed something that is not JSON.'
+  }
+}
+
+// One analysis at a time: a second Refresh while one runs waits for the same result.
+let running: Promise<Result | undefined> | undefined
+
+function analyze($: Api): Promise<Result | undefined> {
+  running ??= runAnalysis($).finally(() => { running = undefined })
+  return running
+}
+
+async function runAnalysis($: Api): Promise<Result | undefined> {
   const c = await getConfig($)
   await update($, view, v => ({ ...v, busy: `Reading your logs of the last ${c.days} days…` }))
-  const out = await python($, [ANALYZE, '--cwd', await $.session.cwd(), '--days', String(c.days),
-    '--context-limit', String(c.contextAt), '--cache-stake', String(c.cacheStake)])
-  if (!out) {
-    await say($, { message: 'Python 3 did not run the analysis. Is python on the PATH?', isError: true })
+  const r = parse<Omit<Result, 'at'>>(await python($, [ANALYZE, '--cwd', await $.session.cwd(), '--days', String(c.days),
+    '--context-limit', String(c.contextAt), '--cache-stake', String(c.cacheStake)]))
+  if (typeof r === 'string') {
+    await say($, { message: `The analysis did not run: ${r}`, isError: true })
     return undefined
   }
-  const res = { ...JSON.parse(out), at: await $.clock.now() } as Result
+  const res = { ...r, at: await $.clock.now() } as Result
   for (const e of res.errors ?? []) $.ui.log(`dutchman: detector failed: ${e}`, { to: 'debug' })
   await $.store.set(RESULT, res)
   await say($, { result: res })
@@ -93,14 +121,8 @@ async function analyze($: Api): Promise<Result | undefined> {
 }
 
 async function actions($: Api, args: string[], tip?: Tip): Promise<Outcome> {
-  const out = await python($, [ACTIONS, ...args], tip ? JSON.stringify(tip.actions) : undefined)
-  return out ? (JSON.parse(out) as Outcome) : { ok: false, message: 'Python 3 did not run, so nothing changed.' }
-}
-
-const older = (have: string, need: string) => {
-  const [a, b] = [have, need].map(v => v.split('.').map(Number))
-  for (let i = 0; i < 3; i++) if ((a[i] ?? 0) !== (b[i] ?? 0)) return (a[i] ?? 0) < (b[i] ?? 0)
-  return false
+  const r = parse<Outcome>(await python($, [ACTIONS, ...args], tip ? JSON.stringify(tip.actions) : undefined))
+  return typeof r === 'string' ? { ok: false, message: `Nothing changed: ${r}` } : r
 }
 
 // ---------- apply and undo ----------
@@ -138,6 +160,7 @@ async function apply($: Api, t: Tip): Promise<void> {
 }
 
 // What Apply would do on this machine, short: the changed lines per file, then what else happens.
+// The backup is not repeated here: the Changes field above already says it.
 async function showPlan($: Api, t: Tip): Promise<void> {
   if ((await read($, view)).plan?.id === t.id) return void update($, view, v => ({ ...v, plan: null })) // second press hides it
   await update($, view, v => ({ ...v, busy: 'Checking your files…' }))
@@ -149,10 +172,11 @@ async function showPlan($: Api, t: Tip): Promise<void> {
     !r.ok && `Would fail: ${r.message}`,
     r.ok && r.message.startsWith('No change') && r.message,
     t.choose && `Shown for ${t.choose.items[0]}. Apply asks which of the ${t.choose.items.length} to change.`,
-    t.reminder && (t.reminder.idle_ms !== undefined
-      ? `A notification after ${Math.round(t.reminder.idle_ms / 60_000)} minutes idle: "${t.reminder.text.replace('{k}', '…')}"`
-      : `A toast at ${k ?? '…'}k tokens: "${t.reminder.text.replace('{k}', String(k ?? '…'))}"`),
-    t.actions.length > 0 && 'Backed up first to ~/.claude/dutchman/backups. Undo puts it back.',
+    t.reminder && (t.reminder.before_expiry_ms !== undefined || t.reminder.idle_ms !== undefined
+      ? `A notice a minute before the cache expires: "${t.reminder.text.replace('{k}', '…')}"`
+      : t.reminder.on_resume
+        ? `A notice when you open such a session: "${t.reminder.text.replace('{k}', '…')}"`
+        : `A notice at ${k ?? '…'}k tokens: "${t.reminder.text.replace('{k}', String(k ?? '…'))}"`),
   ].filter((x): x is string => !!x)
   const diff = r.ok && !r.message.startsWith('No change') ? r.message : ''
   await say($, { plan: { id: t.id, diff, notes } })
@@ -162,14 +186,14 @@ async function undo($: Api, t: Tip): Promise<void> {
   await update($, view, v => ({ ...v, busy: `Undoing "${t.title}"…` }))
   const r = t.actions.length ? await actions($, ['undo', t.id]) : { ok: true, message: '' }
   if (r.ok) await setStatus($, t.id, undefined, t)
-  await say($, { isError: !r.ok, message: r.ok ? `Undone "${t.title}". ${r.message}${t.reminder ? ' Reminder off.' : ''}` : r.message })
+  await say($, { isError: !r.ok, message: r.ok ? `Undid "${t.title}". ${r.message}${t.reminder ? ' Reminder off.' : ''}` : r.message })
 }
 
 // ---------- reminders, while the session runs ----------
 
 // Per loaded module, which is per session.
 const reminders = new Map<string, Reminder>()
-const fired = new Map<string, number>() // context-size reminder: the last threshold toasted
+const fired = new Map<string, number>() // context-size reminder: the last threshold announced
 let idleTimer: { cancel: () => void } | undefined
 let hasPrompted = false
 
@@ -189,16 +213,20 @@ async function checkReminders($: Api): Promise<void> {
   for (const r of reminders.values()) {
     const at = r.id === 'context-size' ? contextAt || undefined : r.at // 0: the user turned it off
     if (at !== undefined) {
-      const step = r.every ?? Infinity
-      const level = tokens < at ? 0 : at + Math.floor((tokens - at) / step) * step
+      const level = reached(tokens, at, r.every)
       if (level > 0 && level > (fired.get(r.id) ?? 0)) {
         fired.set(r.id, level)
         $.ui.toast(r.text.replace('{k}', k), { timeoutMs: 20_000 })
       }
     }
     if (r.on_resume) continue // only at session start, see resumeReminders
-    if (r.idle_ms !== undefined && tokens >= (r.min_tokens ?? 0))
-      idleTimer = $.clock.after(r.idle_ms, () => {
+    // Read the cache setting now: a 1-hour cache applied after the reminder was turned on moves it to 59 minutes.
+    const idle = r.before_expiry_ms !== undefined
+      ? idleBeforeExpiry(((await $.settings.read().catch(() => ({}))) as Record<string, unknown> | undefined)?.promptCacheTtl,
+        r.before_expiry_ms)
+      : r.idle_ms
+    if (idle !== undefined && tokens >= (r.min_tokens ?? 0))
+      idleTimer = $.clock.after(idle, () => {
         void $.ui.notify(r.text.replace('{k}', k), { title: TITLE }).catch(() => $.ui.toast(r.text.replace('{k}', k)))
       })
   }
@@ -239,10 +267,13 @@ let analysis: Promise<Result | undefined> = Promise.resolve(undefined)
 
 async function greet($: Api): Promise<void> {
   if (greeted) return
+  greeted = true // before the first await: session.start and session.attach can both get here
   const surfaces = await $.session.surfaces()
   await $.store.set('last-start', { at: await $.clock.now(), surfaces: surfaces.length })
-  if (surfaces.length === 0) return
-  greeted = true
+  if (surfaces.length === 0) {
+    greeted = false
+    return
+  }
   if (!(await $.store.get(CONFIG))) {
     // First session: the welcome screen, once. The defaults hold until Save, also when the pane is closed.
     await $.store.set(CONFIG, DEFAULTS)
@@ -261,16 +292,9 @@ async function greet($: Api): Promise<void> {
   if (news.length === 0 || (hasPrompted && !DRY) || (!DRY && now - last < OFTEN[c.often])) return
   await $.store.set(ANNOUNCED, now)
   if (c.notify === 'pane') return openPane($)
-  // The app puts the plugin's name above a toast, so the text starts with the money. A promised saving and a
-  // measured cost ("at stake") stay apart: only an exact or estimated saving is called a saving.
   const save = news.reduce((n, t) => n + (t.saving ?? 0), 0)
   const stake = news.reduce((n, t) => n + (t.saving === null ? t.measured ?? 0 : 0), 0)
-  const head = save > 0 && stake > 0 ? `Save ~${money(save)}/mo, and ${money(stake)}/mo more at stake`
-    : save > 0 ? `Save ~${money(save)}/mo on Claude Code`
-    : stake > 0 ? `${money(stake)}/mo of your Claude Code bill is at stake`
-    : 'Claude Code settings that cost you more than needed'
-  const n = news.length
-  $.ui.toast(`${head}. ${n} tip${n > 1 ? 's' : ''} to bring it down: type /dutchman.`, { timeoutMs: 30_000 })
+  $.ui.toast(noticeText(save, stake, news.length), { timeoutMs: 30_000 })
 }
 
 export const register: Register = on => {
@@ -317,13 +341,13 @@ export const register: Register = on => {
       const setup = await getConfig($)
       await update($, view, v => ({ ...v, setup }))
       await openPane($, true)
-      return { text: 'setup opened.' }
+      return { text: 'Setup opened.' }
     }
     // A setup left open without Save is dropped: /dutchman shows the tips.
     await update($, view, v => ({ ...v, setup: null }))
     if (arg === 'refresh') void analyze($)
     await openPane($, true)
-    return { text: arg === 'refresh' ? 'reading your logs again (about a minute).' : 'opened.' }
+    return { text: arg === 'refresh' ? 'Reading your logs again (about a minute).' : 'Opened.' }
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
@@ -343,7 +367,7 @@ export const register: Register = on => {
 
     // ---- one summary line; the pane title already says what this is ----
     const summary = res && !res.note
-      ? [`${money(res.spend)} in ${res.days} days`, saving > 0 && `~${money(saving)}/mo to save`,
+      ? [`${money(res.spend)} in ${res.history_days ?? res.days} days`, saving > 0 && `~${money(saving)}/mo to save`,
           atStake > 0 && `${money(atStake)}/mo at stake`,
           hidden > 0 && `${hidden} under $${v.config.minSaving}/mo hidden`].filter(Boolean).join('  ·  ')
       : ''
@@ -388,7 +412,7 @@ export const register: Register = on => {
       options: [T, string][], pick: (value: T) => void, recommended?: T) => (
       <Box key={key} flexDirection="column" marginBottom={1}>
         <Box flexDirection="row" justifyContent="space-between">
-          <Box flexShrink={1} marginRight={2}><Text>{label}<Text dimColor>  {hint}</Text></Text></Box>
+          <Box flexShrink={1} marginRight={2}><Text>{label}{hint && <Text dimColor>  {hint}</Text>}</Text></Box>
           {recommended !== undefined && (
             <Text dimColor>{value === recommended ? 'recommended' : `recommended: ${options.find(o => o[0] === recommended)?.[1]}`}</Text>
           )}
@@ -403,9 +427,9 @@ export const register: Register = on => {
     const heading = (text: string) => <Text key={`h-${text}`} dimColor bold>{text}</Text>
 
     const MIN: [number, string][] = [[1, '$1'], [5, '$5'], [20, '$20'], [0, 'Any']]
-    const NOTIFY: [Config['notify'], string][] = [['toast', 'Notice'], ['pane', 'Open pane'], ['command', 'Quiet']]
+    const NOTIFY: [Config['notify'], string][] = [['pane', 'Open the pane'], ['toast', 'Show a notice'], ['command', 'Do nothing']]
     const OFTEN_OPTS: [Config['often'], string][] = [['session', 'Every session'], ['daily', 'Daily'], ['weekly', 'Weekly'], ['monthly', 'Monthly']]
-    const CONTEXT: [number, string][] = [[150_000, '150k'], [250_000, '250k'], [400_000, '400k'], [0, 'Never']]
+    const CONTEXT: [number, string][] = [[150_000, '150k'], [250_000, '250k'], [400_000, '400k'], [0, 'Off']]
 
     // ---- welcome: the first session, or /dutchman setup ----
     if (v.setup) {
@@ -419,14 +443,14 @@ export const register: Register = on => {
         <Box flexDirection="column">
           <Box marginBottom={1}><Text dimColor>Reads your Claude Code logs on this machine. Nothing changes until you press Apply.</Text></Box>
           {choice('min', 'Show tips from', 'per month', d.minSaving, MIN, x => draft({ minSaving: x }), 5)}
-          {choice('notify', 'Open tips', 'at session start', d.notify, NOTIFY, x => draft({ notify: x }), 'pane')}
+          {choice('notify', 'At session start', 'when there are new tips', d.notify, NOTIFY, x => draft({ notify: x }), 'pane')}
           {choice('often', 'Show them', 'at most', d.often, OFTEN_OPTS, x => draft({ often: x }), 'weekly')}
-          {choice('context', 'Nudge past', 'tokens in one session', d.contextAt, CONTEXT, x => draft({ contextAt: x }), 250_000)}
+          {choice('context', 'Nudge when a session passes', 'tokens', d.contextAt, CONTEXT, x => draft({ contextAt: x }), 250_000)}
           <Box flexDirection="row" alignItems="center" gap={2} marginTop={1}>
             <Box borderStyle="round" borderColor="success" paddingX={1}>
               <Button key="start" variant="primary" autoFocus onPress={() => void start()}>Save</Button>
             </Box>
-            <Text dimColor>Change it later under Settings</Text>
+            <Text dimColor>You can change these later under Settings.</Text>
           </Box>
         </Box>
       )
@@ -442,16 +466,16 @@ export const register: Register = on => {
           {tabs}
           {heading('TIPS')}
           {choice('min', 'Show tips from', 'per month', c.minSaving, MIN, x => void setConfig($, { minSaving: x }), 5)}
-          {choice('notify', 'Open tips', 'at session start', c.notify, NOTIFY, x => void setConfig($, { notify: x }), 'pane')}
+          {choice('notify', 'At session start', 'when there are new tips', c.notify, NOTIFY, x => void setConfig($, { notify: x }), 'pane')}
           {c.notify !== 'command' && choice('often', 'Show them', 'at most', c.often, OFTEN_OPTS, x => void setConfig($, { often: x }), 'weekly')}
           {heading('REMINDERS')}
-          {choice('context', 'Nudge past', 'tokens in one session', c.contextAt, CONTEXT, x => void setConfig($, { contextAt: x }), 250_000)}
-          {choice('stake', 'Cache reminder from', 'lost to expired caches per month', c.cacheStake,
-            [[5, '$5'], [20, '$20'], [0, 'Never']], x => void setConfig($, { cacheStake: x }), 5)}
+          {choice('context', 'Nudge when a session passes', 'tokens', c.contextAt, CONTEXT, x => void setConfig($, { contextAt: x }), 250_000)}
+          {choice('stake', 'Cache reminders from', 'lost to expired caches per month', c.cacheStake,
+            [[5, '$5'], [20, '$20'], [0, 'Off']], x => void setConfig($, { cacheStake: x }), 5)}
           {heading('ANALYSIS')}
           {choice('days', 'Read logs of', 'the last', c.days, [[14, '14 days'], [30, '30 days'], [90, '90 days']],
             x => void setConfig($, { days: x }), 30)}
-          {choice('refresh', 'Analyse again', 'at session start', c.refresh,
+          {choice('refresh', 'Read them again', 'at session start', c.refresh,
             [['daily', 'Daily'], ['weekly', 'Weekly'], ['manual', 'Only on Refresh']], x => void setConfig($, { refresh: x }), 'daily')}
         </Box>
       )
@@ -490,7 +514,7 @@ export const register: Register = on => {
             <Box flexDirection="column" marginTop={1} paddingLeft={2}>
               {field('Why', t.problem)}
               {field('How', t.how)}
-              {t.saving !== null && field('Saving', `${t.confidence === 'exact' ? '' : 'about '}${money(t.saving)} per month at list price` +
+              {t.saving !== null && field('Saving', `${t.confidence === 'exact' ? '' : 'About '}${money(t.saving)} per month at list price` +
                 (t.confidence === 'exact' ? ', replayed on your own logs.' : '.'))}
               {field('Assumes', t.assumption)}
               {t.change && field(st === 'applied' ? 'Changed' : 'Changes', t.change +
@@ -503,16 +527,15 @@ export const register: Register = on => {
                   {v.plan.notes.map((n, i) => <Text key={`note-${i}`} dimColor>{n}</Text>)}
                 </Box>
               )}
-              <Box flexDirection="row" justifyContent="space-between" alignItems="center">
+              <Box flexDirection="row" alignItems="center">
                 <Box flexDirection="row" gap={1}>
                   {!st && t.change && <Button key={`apply-${t.id}`} variant="primary" onPress={() => void apply($, t)}>{KINDS[t.kind].verb}</Button>}
                   {!st && t.change && <Button key={`plan-${t.id}`} onPress={() => void showPlan($, t)}>
-                    {v.plan?.id === t.id ? 'Hide' : 'What will this do for me?'}</Button>}
+                    {v.plan?.id === t.id ? 'Hide the change' : 'Show the change'}</Button>}
                   {st === 'applied' && <Button key={`undo-${t.id}`} variant="primary" onPress={() => void undo($, t)}>Undo</Button>}
                   {!st && <Button key={`dismiss-${t.id}`} onPress={() => void setStatus($, t.id, 'dismissed').then(set({ open: null }))}>Dismiss</Button>}
                   {st === 'dismissed' && <Button key={`restore-${t.id}`} onPress={() => void setStatus($, t.id, undefined)}>Restore</Button>}
                 </Box>
-                <Text dimColor>Guide §{t.guide}</Text>
               </Box>
             </Box>
           )}
@@ -530,13 +553,17 @@ export const register: Register = on => {
       )
 
     const list = v.tab === 'open' ? open : past
+    const empty = v.tab === 'earlier' ? 'Nothing applied or dismissed yet.'
+      : hidden > 0 ? `No open tips from $${v.config.minSaving}/mo. ${hidden} smaller ${plural(hidden, 'tip is', 'tips are')} hidden; ` +
+          'lower "Show tips from" under Settings to see them.'
+      : 'No open tips: your setup already avoids every cost The Dutchman looks for.'
     return (
       <Box flexDirection="column">
         {header}
         {status}
         {tabs}
         {list.length === 0
-          ? <Text dimColor>{v.tab === 'open' ? 'No open tips: your setup already does what the guide suggests.' : 'Nothing applied or dismissed yet.'}</Text>
+          ? <Text dimColor>{empty}</Text>
           : (['fix', 'reminder', 'check'] as const).map(kind => section(kind, list.filter(t => t.kind === kind)))}
       </Box>
     )

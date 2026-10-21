@@ -1,15 +1,16 @@
 """A top-level effortLevel is ignored for Opus 5.5. Configuration fix, no amount."""
+from tiplib import dget
 
 
 def detect(calls, settings, **_):
-    if 'effortLevel' not in settings or (settings.get('modelSettings') or {}).get('claude-opus-5-5'):
+    if not isinstance(settings.get('effortLevel'), str) or dget(settings, 'modelSettings', 'claude-opus-5-5'):
         return None
     if not any('opus-5-5' in c['model'] for c in calls):
         return None
     lvl = settings['effortLevel']
     return {
-        'id': 'effort-model-settings', 'kind': 'fix', 'category': 'Models', 'confidence': 'config',
-        'title': f'Your effort setting "{lvl}" is ignored by Opus 5.5',
+        'id': 'effort-model-settings', 'kind': 'fix', 'confidence': 'config',
+        'title': f'Make your effort setting "{lvl}" reach Opus 5.5',
         'saving': None, 'measured': None,
         'problem': f'~/.claude/settings.json has "effortLevel": "{lvl}" at the top level. Opus 5.5 only reads effort per '
                    'model, so it runs at its own default and ignores your choice.',
@@ -20,5 +21,5 @@ def detect(calls, settings, **_):
                   'The top-level effortLevel stays for the other models.',
         'actions': [{'op': 'json-merge', 'file': '~/.claude/settings.json',
                      'value': {'modelSettings': {'claude-opus-5-5': {'effortLevel': lvl}}}}],
-        'min_version': '2.1.251', 'restart': True, 'guide': '6.4',
+        'min_version': '2.1.251', 'restart': True,
     }

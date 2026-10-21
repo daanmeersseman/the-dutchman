@@ -1,10 +1,10 @@
 """Turns that came after the cache expired and rewrote a large context. A reminder before it happens."""
-from tiplib import cost, has_frugalitas, main_turns, price_of, ts
+from tiplib import cost, handover, has_frugalitas, main_turns, price_of, ts
 
 MIN_CONTEXT = 100_000
 
 
-def detect(calls, settings, days=30, cache_stake=5.0, **_):
+def detect(calls, settings, home='', days=30, cache_stake=5.0, **_):
     if has_frugalitas(settings) or not cache_stake:
         return None  # Frugalitas shows a cache countdown with the rewrite's price; or the user turned it off
     ttl = 3600 if settings.get('promptCacheTtl') == '1h' else 300
@@ -20,19 +20,20 @@ def detect(calls, settings, days=30, cache_stake=5.0, **_):
     if paid * 30 / days < cache_stake:
         return None
     mins = ttl // 60
+    do = handover(home)
     return {
-        'id': 'cache-expiry', 'kind': 'reminder', 'category': 'Cache', 'confidence': 'measured',
-        'title': f'Get a nudge before the cache of a big session expires',
+        'id': 'cache-expiry', 'kind': 'reminder', 'confidence': 'measured',
+        'title': 'Get a nudge before the cache of a big session expires',
         'saving': None, 'measured': paid,
         'problem': f'{n} times you came back to a session of 100k tokens or more after the cache had expired '
                    f'({mins} minutes idle). The first turn then wrote the whole context again: ${paid:.2f} more than '
                    'reading it from cache.',
-        'how': f'When a session over 100k tokens has been idle for {mins - 1 if mins > 5 else 4} minutes, a toast says '
-               'the cache is about to expire. Answer now, or write a handover and /clear before you walk away.',
+        'how': 'When a session over 100k tokens has been idle until a minute before its cache expires, a notice says '
+               f'so. Answer now, or before a break: {do}.',
         'assumption': 'Some of those turns were new work that needed the context; no amount is promised.',
-        'reminder': {'id': 'cache-expiry', 'idle_ms': (ttl - 60) * 1000, 'min_tokens': MIN_CONTEXT,
+        'reminder': {'id': 'cache-expiry', 'before_expiry_ms': 60_000, 'min_tokens': MIN_CONTEXT,
                      'text': 'The cache of this {k}k session expires in a minute. The next turn after that writes '
-                             'all of it again. Answer now, or /handover and /clear before a break.'},
+                             f'all of it again. Answer now, or before a break: {do}.'},
         'change': 'Turns on the reminder in this plugin. Nothing else changes.',
-        'actions': [], 'restart': False, 'guide': '5',
+        'actions': [], 'restart': False,
     }

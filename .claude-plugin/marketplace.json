@@ -1,12 +1,12 @@
 {
   "name": "the-dutchman",
-  "description": "The Dutchman: cost-saving tips for Claude Code, measured on your own session logs.",
+  "description": "The Dutchman: cost-saving tips for Claude Code, priced on your own session logs.",
   "owner": { "name": "daanmeersseman" },
   "plugins": [
     {
       "name": "dutchman",
       "source": "./",
-      "description": "Cost-saving fixes and reminders for Claude Code, measured on your own session logs."
+      "description": "Cost-saving tips for Claude Code, priced on your own session logs."
     }
   ]
 }

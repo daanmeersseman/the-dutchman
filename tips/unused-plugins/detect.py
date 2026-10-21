@@ -1,7 +1,7 @@
 """Enabled plugins of which no skill, command, agent or MCP tool was used in the window."""
-import json, os
+import os
 
-from tiplib import load_json, used_names
+from tiplib import dget, load_json, plural, used_names
 
 
 def parts(path):
@@ -15,10 +15,10 @@ def parts(path):
 
 
 def detect(sessions, settings, home, days, **_):
-    installed = (load_json(os.path.join(home, 'plugins', 'installed_plugins.json')) or {}).get('plugins') or {}
+    installed = dget(load_json(os.path.join(home, 'plugins', 'installed_plugins.json')), 'plugins') or {}
     used = used_names(sessions)
     idle = []
-    for key, on in (settings.get('enabledPlugins') or {}).items():
+    for key, on in (dget(settings, 'enabledPlugins') or {}).items():
         name = key.split('@')[0]
         if not on or name == 'dutchman':
             continue
@@ -36,8 +36,8 @@ def detect(sessions, settings, home, days, **_):
     keys = [k for k, _ in idle]
     names = ', '.join(k.split('@')[0] for k in keys)
     return {
-        'id': 'unused-plugins:' + ','.join(keys), 'kind': 'fix', 'category': 'Fixed cost', 'confidence': 'measured',
-        'title': f'Turn off plugin{"s" if len(keys) > 1 else ""} you never use: {names}',
+        'id': 'unused-plugins:' + ','.join(keys), 'kind': 'fix', 'confidence': 'measured',
+        'title': f'Turn off {plural(len(keys), "the plugin", "plugins")} you never use: {names}',
         'saving': None, 'measured': None,
         'problem': f'A plugin adds the descriptions of its skills, commands and agents to every turn. In the last {days} '
                    f'days you used none of {names}: ' +
@@ -47,5 +47,5 @@ def detect(sessions, settings, home, days, **_):
         'change': 'Sets ' + ', '.join(f'"{k}"' for k in keys) + ' to false under enabledPlugins in ~/.claude/settings.json.',
         'actions': [{'op': 'json-merge', 'file': '~/.claude/settings.json',
                      'value': {'enabledPlugins': {k: False for k in keys}}}],
-        'restart': True, 'guide': '3.1',
+        'restart': True,
     }
