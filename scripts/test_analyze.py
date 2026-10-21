@@ -90,6 +90,10 @@ class AnalyzeTest(unittest.TestCase):
         _, tips = self.run_it()
         # main sessions: 10.02 on Opus, all of it
         self.assertAlmostEqual(tips['opusplan']['saving'], 10.02 * 0.11, places=2)
+        # a sonnet default does not hide it when the logs show Opus
+        with open(os.path.join(self.home, 'settings.json'), 'w', encoding='utf-8') as f:
+            json.dump({'model': 'sonnet'}, f)
+        self.assertIn('opusplan', self.run_it()[1])
 
     def test_cache_expiry_counts_rewrite_after_gap(self):
         import importlib.util
@@ -118,7 +122,9 @@ class AnalyzeTest(unittest.TestCase):
             json.dump({'promptCacheTtl': '1h', 'env': {'CLAUDE_CODE_SUBAGENT_MODEL': 'claude-sonnet-5-5'}}, f)
         _, tips = self.run_it()
         self.assertNotIn('cache-ttl-1h', tips)
-        self.assertNotIn('subagent-model', tips)
+        # set to Sonnet, yet the fixture's subagent ran on Opus this week: a check, nothing to apply
+        self.assertEqual(tips['subagent-model']['kind'], 'check')
+        self.assertEqual(tips['subagent-model']['actions'], [])
 
     def load(self, name):
         import importlib.util

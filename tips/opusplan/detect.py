@@ -7,7 +7,7 @@ NET = 0.11  # opusplan cut main-session cost by 11% net of the switch cost as me
 def detect(calls, settings, **_):
     model = str(settings.get('model') or '')
     plan = (settings.get('permissions') or {}).get('defaultMode') is not None  # leave a chosen mode alone
-    if 'opusplan' in model or (model and 'opus' not in model):
+    if 'opusplan' in model:  # the logs decide the rest: a default of sonnet says nothing if /model picks Opus
         return None
     main = [c for lst in main_turns(calls).values() for c in lst]
     total = sum(cost(c['t'], price_of(c['model'])) for c in main)
