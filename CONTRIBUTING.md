@@ -1,4 +1,4 @@
-# Contributing to Burndown
+# Contributing to The Dutchman
 
 Thanks for helping people spend less on Claude Code. The most useful contribution is a new tip: one Python file that
 spots a costly setting or habit in the logs and prices it.
@@ -11,7 +11,7 @@ spots a costly setting or habit in the logs and prices it.
 | `scripts/analyze.py` | Runs every detector and prints the tips as JSON. The tip fields are documented at the top. |
 | `scripts/tiplib.py` | Shared helpers: log reading, prices, `cost()`, `main_turns()`, `over_context()`. |
 | `scripts/actions.py` | Applies and undoes a tip's `actions`, with a backup of every file it touches. |
-| `hooks/register.tsx` | The pane, the notice, the `/burndown` command and the reminders. |
+| `hooks/register.tsx` | The pane, the notice, the `/dutchman` command and the reminders. |
 | `types/index.d.ts` | Types shared with the pane. |
 | `docs/guide.md` | The cost guide each tip links to with `guide: '<section>'`. |
 
@@ -30,7 +30,8 @@ spots a costly setting or habit in the logs and prices it.
 3. Return `None` unless the user's own logs show the problem. Below `MIN_USD` (from `tiplib`) a priced tip stays quiet.
 4. Fill in the tip. Write `problem` about *their* numbers, `how` in plain words, and `change` file by file.
 5. Express the change as data in `actions`. The operations are listed at the top of `scripts/actions.py`:
-   `json-merge`, `json-list`, `copy-file`, `frontmatter-set`. Apply backs up every file first, and Undo restores it.
+   `json-merge` (a null value removes a key), `json-list`, `line-replace`, `copy-file`, `frontmatter-set`. Apply backs
+   up every file first, and Undo restores it. `actions.py apply <id> --plan` prints what Apply would change.
    A new kind of change needs a new operation there, with a test in `scripts/test_actions.py`.
 6. Add a test with **hand-computed** amounts to `scripts/test_analyze.py`. Build the logs in `setUp`, and assert the
    exact saving.
@@ -74,7 +75,7 @@ To try the pane, add this folder as a local marketplace and install from it:
 
 ```
 /plugin marketplace add <path to your clone>
-/plugin install burndown@claude-burndown
+/plugin install dutchman@the-dutchman
 ```
 
 After an edit, `/reload-plugins` picks it up. Set `DRY = true` at the top of `hooks/register.tsx` to see the tips at

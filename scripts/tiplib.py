@@ -1,5 +1,8 @@
 """Shared helpers for the tip detectors in tips/*/detect.py: log reading and list prices."""
-import collections, datetime as dt, glob, json, os
+import collections, datetime as dt, glob, json, os, re
+
+COMMAND = re.compile(r'<command-name>/([^<\s]+)</command-name>')
+PW_HEAVY = ('browser_take_screenshot', 'browser_snapshot', 'browser_network_requests')  # large results, guide 7.2
 
 # USD per 1M tokens: input, output, cache read, cache write 5m, cache write 1h. The first matching key wins.
 PRICES = {
@@ -37,7 +40,7 @@ def read_calls(home, since):
     """One record per API call (deduped on message.id), plus per-session facts the detectors need."""
     calls = {}
     sessions = collections.defaultdict(lambda: {'compactions': [], 'mcp_used': set(), 'skills_used': set(),
-                                                'bash_calls': 0, 'bash_chars': 0})
+                                                'bash_calls': 0, 'bash_chars': 0, 'names': set(), 'pw_main': []})
     for path in glob.glob(os.path.join(home, 'projects', '**', '*.jsonl'), recursive=True):
         sub = os.sep + 'subagents' + os.sep in path or '/subagents/' in path
         agent = 'main'
@@ -59,6 +62,10 @@ def read_calls(home, since):
                 if stamp < since:
                     continue
                 sid = e.get('sessionId')
+                if sub:
+                    sessions[sid]['names'].add(agent)  # what a plugin's agent was used under
+                if '<command-name>' in line:
+                    sessions[sid]['names'].update(COMMAND.findall(line))
                 if e.get('type') == 'system' and e.get('subtype') == 'compact_boundary':
                     sessions[sid]['compactions'].append((stamp, (e.get('compactMetadata') or {}).get('trigger')))
                     continue
@@ -76,8 +83,12 @@ def read_calls(home, since):
                         name = b.get('name') or ''
                         if name.startswith('mcp__'):
                             sessions[sid]['mcp_used'].add(name.split('__')[1])
+                            if name.split('__')[-1] in PW_HEAVY and not sub and not e.get('isSidechain'):
+                                sessions[sid]['pw_main'].append(stamp)
                         elif name == 'Skill':
-                            sessions[sid]['skills_used'].add(str((b.get('input') or {}).get('skill', '')).split(':')[-1])
+                            skill = str((b.get('input') or {}).get('skill', ''))
+                            sessions[sid]['skills_used'].add(skill.split(':')[-1])
+                            sessions[sid]['names'].add(skill)
                 u, mid = m.get('usage'), m.get('id')
                 if not u or not mid:
                     continue
@@ -120,6 +131,16 @@ def project_mcp_state(cwd):
 def has_hook(settings, needle):
     """Whether any configured hook command mentions needle."""
     return needle in json.dumps(settings.get('hooks') or {})
+
+
+def used_names(sessions):
+    """Skills, commands, agent types and MCP servers used in any session, as their names appear in the logs."""
+    return set().union(*(s['names'] | s['mcp_used'] for s in sessions.values())) if sessions else set()
+
+
+def read_price(c):
+    """What one token costs to carry into this call: the cache read price of its model."""
+    return price_of(c['model'])[2] / 1e6
 
 
 def has_frugalitas(settings):

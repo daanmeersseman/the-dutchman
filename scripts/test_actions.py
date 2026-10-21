@@ -33,6 +33,47 @@ class ActionsTest(unittest.TestCase):
         self.assertEqual(self.read(self.settings), before)
         self.assertFalse(os.path.exists(self.backups))
 
+    def test_plan_lists_only_changed_lines(self):
+        actions.write_json(self.settings, json.loads(self.read(self.settings)))  # as Claude Code writes it
+        before = self.read(self.settings)
+        r = actions.apply('t', [{'op': 'json-merge', 'file': self.settings, 'value': {'model': 'sonnet'}}],
+                          backups=self.backups, show=True)
+        self.assertTrue(r['ok'], r)
+        self.assertEqual(r['message'].splitlines()[1:], ['  model: "opus" → "sonnet"'])
+        r = actions.apply('t', [{'op': 'json-merge', 'file': self.settings, 'value': {'env': {'B': '2'}}}],
+                          backups=self.backups, show=True)
+        self.assertEqual(r['message'].splitlines()[1:], ['  env.B: (not set) → "2"'])
+        md = os.path.join(self.dir, 'SKILL.md')
+        open(md, 'w').write('---\nname: x\n---\nbody\n')
+        r = actions.apply('f', [{'op': 'frontmatter-set', 'file': md, 'key': 'k', 'value': 'v'}],
+                          backups=self.backups, show=True)
+        self.assertEqual(r['message'].splitlines()[1:], ['  +k: v'])
+        new = os.path.join(self.dir, 'new', 'SKILL.md')
+        src = os.path.join(self.dir, 'src.md')
+        open(src, 'w').write('a\nb\n')
+        r = actions.apply('c', [{'op': 'copy-file', 'src': src, 'dest': new}], backups=self.backups, show=True)
+        self.assertTrue(r['message'].endswith('(new file, 2 lines)'), r)
+        self.assertEqual(self.read(self.settings), before)
+        self.assertFalse(os.path.exists(self.backups))
+        self.assertFalse(os.path.exists(new))
+
+    def test_null_removes_key_and_objects_in_list(self):
+        actions.apply('n', [{'op': 'json-merge', 'file': self.settings, 'value': {'env': {'A': None}}},
+                            {'op': 'json-list', 'file': self.settings, 'key': 'denied', 'add': [{'serverName': 'x'}]},
+                            {'op': 'json-list', 'file': self.settings, 'key': 'denied', 'add': [{'serverName': 'x'}]}],
+                      backups=self.backups)
+        self.assertEqual(json.loads(self.read(self.settings)), {'env': {}, 'model': 'opus', 'denied': [{'serverName': 'x'}]})
+
+    def test_line_replace_keeps_line_ending_and_fails_when_absent(self):
+        md = os.path.join(self.dir, 'CLAUDE.md')
+        with open(md, 'w', newline='') as f:
+            f.write('a\r\n@RTK.md\r\nb\r\n')
+        act = [{'op': 'line-replace', 'file': md, 'find': '@RTK.md', 'replace': 'Read it.'}]
+        self.assertTrue(actions.apply('l', act, backups=self.backups)['ok'])
+        with open(md, newline='') as f:
+            self.assertEqual(f.read(), 'a\r\nRead it.\r\nb\r\n')
+        self.assertFalse(actions.apply('l2', act, backups=self.backups)['ok'])
+
     def test_copy_into_new_folder_undo_removes_it(self):
         src = os.path.join(self.dir, 'src.md')
         open(src, 'w').write('hi')

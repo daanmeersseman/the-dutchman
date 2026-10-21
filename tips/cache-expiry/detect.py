@@ -12,7 +12,8 @@ def detect(calls, settings, days=30, cache_stake=5.0, **_):
     for lst in main_turns(calls).values():
         for prev, c in zip(lst, lst[1:]):
             inp, out, read, w5, w1 = c['t']
-            if (ts(c['ts']) - ts(prev['ts'])).total_seconds() > ttl and w5 + w1 >= MIN_CONTEXT:
+            gap = (ts(c['ts']) - ts(prev['ts'])).total_seconds()
+            if ttl < gap < 3600 and w5 + w1 >= MIN_CONTEXT:  # an hour or more is a resume: cold-resume
                 p = price_of(c['model'])
                 paid += cost((0, 0, 0, w5, w1), p) - cost((0, 0, w5 + w1, 0, 0), p)  # rewrite instead of a read
                 n += 1

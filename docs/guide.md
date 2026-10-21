@@ -1,6 +1,6 @@
 # Fewer tokens, same work: a Claude Code cost guide
 
-This guide comes with Burndown, a Claude Code plugin that measures each of these tips on your own session logs.
+This guide comes with The Dutchman, a Claude Code plugin that measures each of these tips on your own session logs.
 
 By Daan Meersseman (@daanmeersseman), with measurements from Mark, a colleague. Every tip comes with what it did for one of us, measured at Anthropic list price. Your numbers will differ. The ratios are what matter.
 
@@ -198,7 +198,7 @@ The context is read from the cache at about a tenth of the input price, **as lon
 
 ### 5.1 5 minutes or 1 hour?
 
-The 1-hour cache doubles the write price, so it only pays off if you often pause between 5 and 60 minutes. **Measure, then choose.** The Burndown plugin's 1-hour cache tip back-tests the 1-hour cache on your own logs.
+The 1-hour cache doubles the write price, so it only pays off if you often pause between 5 and 60 minutes. **Measure, then choose.** The Dutchman plugin's 1-hour cache tip back-tests the 1-hour cache on your own logs.
 
 ```json
 { "promptCacheTtl": "1h" }

@@ -1,12 +1,12 @@
 {
-  "name": "claude-burndown",
-  "description": "Burndown: cost-saving tips for Claude Code, measured on your own session logs.",
+  "name": "the-dutchman",
+  "description": "The Dutchman: cost-saving tips for Claude Code, measured on your own session logs.",
   "owner": { "name": "daanmeersseman" },
   "plugins": [
     {
-      "name": "burndown",
+      "name": "dutchman",
       "source": "./",
-      "description": "Brings your Claude Code bill down with fixes and reminders measured on your own session logs."
+      "description": "Cost-saving fixes and reminders for Claude Code, measured on your own session logs."
     }
   ]
 }

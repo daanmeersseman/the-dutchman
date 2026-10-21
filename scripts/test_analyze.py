@@ -120,6 +120,64 @@ class AnalyzeTest(unittest.TestCase):
         self.assertNotIn('cache-ttl-1h', tips)
         self.assertNotIn('subagent-model', tips)
 
+    def load(self, name):
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(name, os.path.join(analyze.TIPS, name, 'detect.py'))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def test_cold_resume_counts_only_gaps_of_an_hour(self):
+        mod = self.load('cold-resume')
+        calls, _ = analyze.read_calls(self.home, '2026-10-01')
+        self.assertIsNone(mod.detect(calls=calls, settings={}, days=30))  # 20 min apart: cache-expiry, not this
+        main = [c for c in calls if not c['side'] and 'opus' in c['model']][-1]
+        calls += [dict(main, ts='2026-10-19T12:00:00Z'), dict(main, ts='2026-10-19T14:00:00Z')]
+        # two resumes of a 1M write on Opus: 2 * (5 - 0.2)
+        self.assertAlmostEqual(mod.detect(calls=calls, settings={}, days=30)['measured'], 9.6, places=2)
+        self.assertTrue(mod.detect(calls=calls, settings={}, days=30)['reminder']['on_resume'])
+
+    def test_autocompact_override_moves_to_window(self):
+        mod = self.load('autocompact-override')
+        self.assertIsNone(mod.detect(sessions={}, settings={'env': {'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE': '80'}}, days=30))
+        t = mod.detect(sessions={}, settings={'env': {'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE': '30'}}, days=30)
+        self.assertEqual(t['actions'][0]['value'], {'env': {'CLAUDE_AUTOCOMPACT_PCT_OVERRIDE': None}, 'autoCompactWindow': 300_000})
+
+    def test_output_style_is_a_tenth_of_main_output(self):
+        mod = self.load('output-style')
+        calls, _ = analyze.read_calls(self.home, '2026-10-01')
+        self.assertIsNone(mod.detect(calls=calls, settings={'outputStyle': 'Concise'}))
+        calls = [dict(c, t=(0, 1_000_000, 0, 0, 0)) for c in calls if not c['side'] and 'opus' in c['model']]
+        # two main Opus turns of 1M output at $20: 40, a tenth is 4
+        self.assertAlmostEqual(mod.detect(calls=calls, settings={})['saving'], 4.0, places=2)
+
+    def test_unused_plugins_skips_used_and_hooked(self):
+        mod = self.load('unused-plugins')
+        for name, kind in (('quiet', 'skills'), ('busy', 'skills'), ('hooked', 'hooks')):
+            os.makedirs(os.path.join(self.home, 'cache', name, kind, 'thing'))
+        json.dump({'plugins': {f'{n}@m': [{'installPath': os.path.join(self.home, 'cache', n)}] for n in ('quiet', 'busy', 'hooked')}},
+                  open(os.path.join(self.home, 'plugins.json'), 'w'))
+        os.makedirs(os.path.join(self.home, 'plugins'))
+        os.replace(os.path.join(self.home, 'plugins.json'), os.path.join(self.home, 'plugins', 'installed_plugins.json'))
+        sessions = {'s': {'names': {'busy:thing'}, 'mcp_used': set()}}
+        settings = {'enabledPlugins': {'quiet@m': True, 'busy@m': True, 'hooked@m': True}}
+        t = mod.detect(sessions=sessions, settings=settings, home=self.home, days=30)
+        self.assertEqual(t['actions'][0]['value'], {'enabledPlugins': {'quiet@m': False}})
+
+    def test_claude_md_import_replaces_only_picked_line(self):
+        mod = self.load('claude-md-import')
+        mod.MIN_USD = 0  # the fixture has only three main turns
+        open(os.path.join(self.home, 'BIG.md'), 'w').write('x' * 400_000)  # about 100k tokens
+        open(os.path.join(self.home, 'CLAUDE.md'), 'w').write('# me\n@BIG.md\n')
+        calls, _ = analyze.read_calls(self.home, '2026-10-01')
+        t = mod.detect(calls=calls, home=self.home, days=30)
+        # 100k tokens on each of the 3 main turns: 2 on Opus at 0.2, 1 on Haiku at 0.01 per 1M
+        self.assertAlmostEqual(t['measured'], 100_000 * (0.2 + 0.2 + 0.01) / 1e6, places=4)
+        import actions
+        r = actions.apply('i', t['actions'], ['BIG.md'], backups=os.path.join(self.home, 'b'))
+        self.assertTrue(r['ok'], r)
+        self.assertEqual(open(os.path.join(self.home, 'CLAUDE.md')).read(), '# me\nRead ~/.claude/BIG.md when the task needs it.\n')
+
 
 if __name__ == '__main__':
     unittest.main()

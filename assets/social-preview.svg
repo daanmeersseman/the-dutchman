@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" width="1280" height="640">
+  <rect width="1280" height="640" fill="#1F1B1A"/>
+  <g transform="translate(110 192) scale(1)">
+  <defs>
+    <linearGradient id="wood" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0" stop-color="#E8613C"/>
+      <stop offset="1" stop-color="#F2994A"/>
+    </linearGradient>
+  </defs>
+  <rect width="256" height="256" rx="56" fill="#1F1B1A"/>
+  <circle cx="188" cy="62" r="30" fill="#FFF4EC"/>
+  <text x="188" y="77" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-weight="700" font-size="42" fill="#E8613C">$</text>
+  <path fill="#FFF4EC" d="M168 112A20 7 0 0 1 208 112V118H168Z"/>
+  <path fill="url(#wood)" d="M26 126C30 122 36 124 42 130C66 140 98 134 120 120C134 112 146 108 160 108H164C164 120 212 120 212 108C222 110 230 120 230 134V182C230 196 220 206 206 206H84C56 206 40 192 32 166C28 152 24 136 26 126Z"/>
+  <path fill="none" stroke="#1F1B1A" stroke-opacity="0.3" stroke-width="6" stroke-linecap="round" d="M58 176C96 182 142 178 180 166"/>
+  </g>
+  <text x="420" y="300" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-weight="700" font-size="104" letter-spacing="-2" fill="#E8613C">The Dutchman</text>
+  <text x="424" y="370" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-weight="400" font-size="36" fill="#FFF4EC">Not a cent more on Claude Code than needed.</text>
+  <text x="424" y="420" font-family="Inter, 'Segoe UI', Helvetica, Arial, sans-serif" font-weight="400" font-size="28" fill="#8B8580">Cost-saving fixes, measured on your own session logs.</text>
+</svg>

@@ -1,18 +1,20 @@
 """Apply or undo a tip's actions. Every file is backed up first; undo puts it back.
 
-Usage: python actions.py apply <tip-id> [--items a,b] [--dry]    (the tip's actions as JSON on stdin)
+Usage: python actions.py apply <tip-id> [--items a,b] [--dry | --plan]    (the tip's actions as JSON on stdin)
        python actions.py undo <tip-id>
 Prints JSON: {"ok": bool, "message": str}. With --dry nothing is written; the message is the diff it would make.
+With --plan nothing is written either; the message is a short list of the lines each file gains or loses.
 
 Actions (paths absolute or with ~; "{item}" is replaced by each chosen item):
-  {"op": "json-merge", "file", "value"}             deep-merge an object into a JSON file
-  {"op": "json-list", "file", "key", "add", "remove"} add/remove strings in a top-level list
+  {"op": "json-merge", "file", "value"}             deep-merge an object into a JSON file; a null value removes the key
+  {"op": "json-list", "file", "key", "add", "remove"} add/remove items (strings or objects) in a top-level list
+  {"op": "line-replace", "file", "find", "replace"}  replace every line that is exactly `find` (ignoring end spaces)
   {"op": "copy-file", "src", "dest"}                 copy a file, creating folders
   {"op": "frontmatter-set", "file", "key", "value"}  set a key in a Markdown file's YAML frontmatter
 """
 import argparse, difflib, hashlib, json, os, re, shutil, sys, tempfile
 
-BACKUPS = os.path.expanduser(os.path.join('~', '.claude', 'burndown', 'backups'))
+BACKUPS = os.path.expanduser(os.path.join('~', '.claude', 'dutchman', 'backups'))
 ITEM = re.compile(r'^[\w.-]+$')  # items become path parts: no separators, no ..
 
 
@@ -44,7 +46,9 @@ def write_json(path, data):
 
 def merge(dst, src):
     for k, v in src.items():
-        if isinstance(v, dict) and isinstance(dst.get(k), dict):
+        if v is None:
+            dst.pop(k, None)
+        elif isinstance(v, dict) and isinstance(dst.get(k), dict):
             merge(dst[k], v)
         else:
             dst[k] = v
@@ -81,6 +85,17 @@ def run(a):
         dest = norm(a['dest'])
         os.makedirs(os.path.dirname(dest), exist_ok=True)
         shutil.copyfile(norm(a['src']), dest)
+    elif op == 'line-replace':
+        f = norm(a['file'])
+        with open(f, encoding='utf-8', newline='') as fh:
+            lines = fh.read().splitlines(keepends=True)
+        hit = [i for i, l in enumerate(lines) if l.rstrip() == a['find']]
+        if not hit:
+            raise ValueError(f'{a["find"]!r} is not a line in {f}')
+        for i in hit:
+            lines[i] = a['replace'] + lines[i][len(lines[i].rstrip('\r\n')):]
+        with open(f, 'w', encoding='utf-8', newline='') as fh:
+            fh.write(''.join(lines))
     elif op == 'frontmatter-set':
         frontmatter_set(norm(a['file']), a['key'], a['value'])
     else:
@@ -128,9 +143,9 @@ def text(path):
         return f.read().splitlines(keepends=True)
 
 
-def preview(steps, files):
-    """Run the steps on temporary copies and return the unified diff."""
-    tmp = tempfile.mkdtemp(prefix='burndown-')
+def simulate(steps, files):
+    """Run the steps on temporary copies; return (file, lines before, lines after) per file."""
+    tmp = tempfile.mkdtemp(prefix='dutchman-')
     try:
         copies = {f: os.path.join(tmp, str(i), os.path.basename(f)) for i, f in enumerate(files)}
         for f, c in copies.items():
@@ -141,12 +156,51 @@ def preview(steps, files):
             a = dict(a)
             a['file' if 'file' in a else 'dest'] = copies[target(a)]
             run(a)
-        return ''.join(''.join(difflib.unified_diff(text(f), text(c), f, f + ' (after)')) for f, c in copies.items())
+        return [(f, text(f), text(c)) for f, c in copies.items()]
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 
 
-def apply(tip_id, actions, items=(), backups=BACKUPS, dry=False):
+def preview(steps, files):
+    """The unified diff the steps would make."""
+    return ''.join(''.join(difflib.unified_diff(a, b, f, f + ' (after)')) for f, a, b in simulate(steps, files))
+
+
+def short(path):
+    home = os.path.expanduser('~')
+    return '~' + path[len(home):].replace(os.sep, '/') if path.startswith(home) else path
+
+
+def leaves(d, path=''):
+    """A JSON object as {'a.b': value}; lists stay whole, so a list change reads as one line."""
+    if isinstance(d, dict) and d:
+        return {k: v for key, val in d.items() for k, v in leaves(val, f'{path}.{key}' if path else key).items()}
+    return {path: d}
+
+
+def plan(steps, files):
+    """Per file what changes, short enough to read before Apply: keys for JSON, changed lines otherwise."""
+    out = []
+    for f, a, b in simulate(steps, files):
+        if a == b:
+            continue
+        if not os.path.exists(f):
+            out.append(f'{short(f)}  (new file, {len(b)} lines)')
+            continue
+        out.append(short(f))
+        try:
+            old, new = leaves(json.loads(''.join(a) or '{}')), leaves(json.loads(''.join(b)))
+        except ValueError:
+            out += ['  ' + l.rstrip('\r\n') for l in difflib.unified_diff(a, b, n=0)
+                    if l[:1] in '+-' and l[:3] not in ('+++', '---')]
+            continue
+        js = lambda v: json.dumps(v, ensure_ascii=False)
+        out += [f'  {k}: {js(old[k]) if k in old else "(not set)"} → {js(new[k]) if k in new else "(removed)"}'
+                for k in dict.fromkeys([*old, *new]) if old.get(k, ...) != new.get(k, ...)]
+    return '\n'.join(out)
+
+
+def apply(tip_id, actions, items=(), backups=BACKUPS, dry=False, show=False):
     d = folder(tip_id, backups)
     if os.path.exists(os.path.join(d, 'manifest.json')):
         return {'ok': False, 'message': 'This tip is already applied. Undo it first.'}
@@ -155,9 +209,9 @@ def apply(tip_id, actions, items=(), backups=BACKUPS, dry=False):
     except ValueError as e:
         return {'ok': False, 'message': f'Nothing changed: {e}'}
     files = list(dict.fromkeys(target(a) for a in steps))
-    if dry:
+    if dry or show:
         try:
-            return {'ok': True, 'message': preview(steps, files) or 'No change: already in place.'}
+            return {'ok': True, 'message': (plan if show else preview)(steps, files) or 'No change: already in place.'}
         except Exception as e:
             return {'ok': False, 'message': f'Would fail: {e}'}
     os.makedirs(d, exist_ok=True)
@@ -202,10 +256,11 @@ if __name__ == '__main__':
     ap.add_argument('tip')
     ap.add_argument('--items', default='')
     ap.add_argument('--dry', action='store_true')
+    ap.add_argument('--plan', action='store_true')
     a = ap.parse_args()
     sys.stdout.reconfigure(encoding='utf-8')
     if a.cmd == 'apply':
-        res = apply(a.tip, json.loads(sys.stdin.read()), [x for x in a.items.split(',') if x], dry=a.dry)
+        res = apply(a.tip, json.loads(sys.stdin.read()), [x for x in a.items.split(',') if x], dry=a.dry, show=a.plan)
     else:
         res = undo(a.tip)
     print(json.dumps(res, ensure_ascii=False))

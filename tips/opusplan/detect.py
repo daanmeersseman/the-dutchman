@@ -6,6 +6,7 @@ NET = 0.11  # opusplan cut main-session cost by 11% net of the switch cost as me
 
 def detect(calls, settings, **_):
     model = str(settings.get('model') or '')
+    plan = (settings.get('permissions') or {}).get('defaultMode') is not None  # leave a chosen mode alone
     if 'opusplan' in model or (model and 'opus' not in model):
         return None
     main = [c for lst in main_turns(calls).values() for c in lst]
@@ -26,7 +27,10 @@ def detect(calls, settings, **_):
                'context to the cache once more, so plan the whole task and approve once.',
         'assumption': f'About {NET:.0%} net, as measured for the guide: Sonnet turns cost 35% less, minus the cache write '
                       'at each switch. It depends on how much of your work happens after a plan.',
-        'change': 'Sets "model": "opusplan" in ~/.claude/settings.json. /model switches back for one session.',
-        'actions': [{'op': 'json-merge', 'file': '~/.claude/settings.json', 'value': {'model': 'opusplan'}}],
+        'change': 'Sets "model": "opusplan" in ~/.claude/settings.json' + (
+            '.' if plan else ', and starts new sessions in plan mode ("defaultMode": "plan"), so Opus plans first.') +
+            ' /model switches back for one session.',
+        'actions': [{'op': 'json-merge', 'file': '~/.claude/settings.json',
+                     'value': {'model': 'opusplan', **({} if plan else {'permissions': {'defaultMode': 'plan'}})}}],
         'restart': True, 'guide': '6.2',
     }

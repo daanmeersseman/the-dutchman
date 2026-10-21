@@ -9,8 +9,8 @@ type Outcome = { ok: boolean; message: string }
 // Test mode: analyse and announce the tips at every session start; Apply shows the diff and writes nothing.
 const DRY = false
 const DAY = 86_400_000
-const PANE = 'burndown'
-const TITLE = 'Burndown'
+const PANE = 'dutchman'
+const TITLE = 'The Dutchman'
 const RESULT = 'result-v5' // bump when the tip shape changes, so an old cached result is not shown
 const STATE = 'state-v2'
 const CONFIG = 'config-v1'
@@ -24,8 +24,8 @@ const ACTIONS = fsPath(new URL('../scripts/actions.py', import.meta.url))
 
 const DEFAULTS: Config = { minSaving: 5, notify: 'pane', contextAt: 250_000, days: 30, refresh: 'daily', cacheStake: 5, often: 'weekly' }
 
-const view = atom({ plugin: 'burndown', key: 'view' } as const, {
-  result: null, state: {}, open: null, busy: null, message: null, preview: null, tab: 'open', config: DEFAULTS, setup: null,
+const view = atom({ plugin: 'dutchman', key: 'view' } as const, {
+  result: null, state: {}, open: null, busy: null, message: null, preview: null, plan: null, tab: 'open', config: DEFAULTS, setup: null,
 } as View)
 
 const money = (n: number) => `$${n < 10 ? n.toFixed(2) : Math.round(n)}`
@@ -68,9 +68,9 @@ async function python($: Api, args: string[], stdin?: string): Promise<string | 
     try {
       const r = await $.process.run([py, '-I', ...args], { timeoutMs: 300_000, ...(stdin ? { stdin } : {}) })
       if (r.exitCode === 0) return r.stdout
-      $.ui.log(`burndown: ${py} exited ${r.exitCode}: ${r.stderr.slice(-500)}`, { to: 'debug' })
+      $.ui.log(`dutchman: ${py} exited ${r.exitCode}: ${r.stderr.slice(-500)}`, { to: 'debug' })
     } catch (err) {
-      $.ui.log(`burndown: ${py}: ${String(err)}`, { to: 'debug' })
+      $.ui.log(`dutchman: ${py}: ${String(err)}`, { to: 'debug' })
     }
   }
   return undefined
@@ -86,7 +86,7 @@ async function analyze($: Api): Promise<Result | undefined> {
     return undefined
   }
   const res = { ...JSON.parse(out), at: await $.clock.now() } as Result
-  for (const e of res.errors ?? []) $.ui.log(`burndown: detector failed: ${e}`, { to: 'debug' })
+  for (const e of res.errors ?? []) $.ui.log(`dutchman: detector failed: ${e}`, { to: 'debug' })
   await $.store.set(RESULT, res)
   await say($, { result: res })
   return res
@@ -114,7 +114,7 @@ async function apply($: Api, t: Tip): Promise<void> {
   let items: string[] = []
   if (t.choose) {
     // shortcut: ask shows at most 4 items; a longer list needs a Select in the pane
-    const a = await $.ui.ask(t.choose.question, { header: 'Burndown', options: t.choose.items.slice(0, 4), multiSelect: true })
+    const a = await $.ui.ask(t.choose.question, { header: 'The Dutchman', options: t.choose.items.slice(0, 4), multiSelect: true })
       .catch(() => '')
     items = a.split(',').map(s => s.trim()).filter(s => t.choose!.items.includes(s))
     if (items.length === 0) return say($, { message: 'Nothing picked, nothing changed.' })
@@ -135,6 +135,27 @@ async function apply($: Api, t: Tip): Promise<void> {
       ? `Applied "${t.title}". ${r.message}${t.reminder ? ' Reminder on.' : ''}${t.restart ? ' Takes effect in new sessions.' : ''}`
       : r.message,
   })
+}
+
+// What Apply would do on this machine, short: the changed lines per file, then what else happens.
+async function showPlan($: Api, t: Tip): Promise<void> {
+  if ((await read($, view)).plan?.id === t.id) return void update($, view, v => ({ ...v, plan: null })) // second press hides it
+  await update($, view, v => ({ ...v, busy: 'Checking your files…' }))
+  // A tip with a choice shows its first item; the real choice comes at Apply.
+  const items = t.choose ? ['--items', t.choose.items[0]] : []
+  const r = t.actions.length ? await actions($, ['apply', t.id, ...items, '--plan'], t) : { ok: true, message: '' }
+  const k = t.reminder?.id === 'context-size' ? (await getConfig($)).contextAt / 1000 : undefined
+  const notes = [
+    !r.ok && `Would fail: ${r.message}`,
+    r.ok && r.message.startsWith('No change') && r.message,
+    t.choose && `Shown for ${t.choose.items[0]}. Apply asks which of the ${t.choose.items.length} to change.`,
+    t.reminder && (t.reminder.idle_ms !== undefined
+      ? `A notification after ${Math.round(t.reminder.idle_ms / 60_000)} minutes idle: "${t.reminder.text.replace('{k}', '…')}"`
+      : `A toast at ${k ?? '…'}k tokens: "${t.reminder.text.replace('{k}', String(k ?? '…'))}"`),
+    t.actions.length > 0 && 'Backed up first to ~/.claude/dutchman/backups. Undo puts it back.',
+  ].filter((x): x is string => !!x)
+  const diff = r.ok && !r.message.startsWith('No change') ? r.message : ''
+  await say($, { plan: { id: t.id, diff, notes } })
 }
 
 async function undo($: Api, t: Tip): Promise<void> {
@@ -175,11 +196,21 @@ async function checkReminders($: Api): Promise<void> {
         $.ui.toast(r.text.replace('{k}', k), { timeoutMs: 20_000 })
       }
     }
+    if (r.on_resume) continue // only at session start, see resumeReminders
     if (r.idle_ms !== undefined && tokens >= (r.min_tokens ?? 0))
       idleTimer = $.clock.after(r.idle_ms, () => {
         void $.ui.notify(r.text.replace('{k}', k), { title: TITLE }).catch(() => $.ui.toast(r.text.replace('{k}', k)))
       })
   }
+}
+
+// A session that opens with a big context was resumed: the reminder says so once, before the first turn.
+async function resumeReminders($: Api): Promise<void> {
+  const rs = [...reminders.values()].filter(r => r.on_resume)
+  if (rs.length === 0) return
+  const tokens = (await $.session.usage().catch(() => undefined))?.context.tokens
+  if (!tokens) return
+  for (const r of rs) if (tokens >= (r.min_tokens ?? 0)) $.ui.toast(r.text.replace('{k}', String(Math.round(tokens / 1000))), { timeoutMs: 30_000 })
 }
 
 // ---------- the pane ----------
@@ -197,7 +228,7 @@ function earlier(v: View): Tip[] {
 // focus: a pane without the keyboard spends the first click on taking it, so a choice needs two clicks.
 async function openPane($: Api, focus = false): Promise<void> {
   const error = await $.ui.open({ id: PANE, title: TITLE, ...(focus ? { focus: true as const } : {}) }).then(() => null, err => String(err))
-  if (error) $.ui.log(`burndown: open: ${error}`, { to: 'debug' })
+  if (error) $.ui.log(`dutchman: open: ${error}`, { to: 'debug' })
   await $.store.set('last-open', { at: await $.clock.now(), error })
 }
 
@@ -239,15 +270,16 @@ async function greet($: Api): Promise<void> {
     : stake > 0 ? `${money(stake)}/mo of your Claude Code bill is at stake`
     : 'Claude Code settings that cost you more than needed'
   const n = news.length
-  $.ui.toast(`${head}. ${n} tip${n > 1 ? 's' : ''} to bring it down: type /burndown.`, { timeoutMs: 30_000 })
+  $.ui.toast(`${head}. ${n} tip${n > 1 ? 's' : ''} to bring it down: type /dutchman.`, { timeoutMs: 30_000 })
 }
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const result = await next(e)
-    await $.command.register({ name: 'burndown', description: 'Cost-saving tips measured on your own logs: /burndown [refresh|setup]' })
+    await $.command.register({ name: 'dutchman', description: 'Cost-saving tips measured on your own logs: /dutchman [refresh|setup]' })
     analysis = (async () => {
       await loadReminders($)
+      void resumeReminders($).catch(() => {})
       const state = ((await $.store.get(STATE)) ?? {}) as State
       const cached = (await $.store.get(RESULT)) as Result | undefined
       await update($, view, v => ({ ...v, state, result: cached ?? null }))
@@ -256,14 +288,14 @@ export const register: Register = on => {
       const stale = !cached || (await $.clock.now()) - cached.at > REFRESH[config.refresh]
       return DRY || stale ? analyze($) : cached
     })()
-    analysis.catch(err => $.ui.log(`burndown: ${String(err)}`, { to: 'debug' }))
-    void greet($).catch(err => $.ui.log(`burndown: ${String(err)}`, { to: 'debug' }))
+    analysis.catch(err => $.ui.log(`dutchman: ${String(err)}`, { to: 'debug' }))
+    void greet($).catch(err => $.ui.log(`dutchman: ${String(err)}`, { to: 'debug' }))
     return result
   })
 
   on('session.attach', async ($, e, next) => {
     const r = await next(e)
-    void greet($).catch(err => $.ui.log(`burndown: ${String(err)}`, { to: 'debug' }))
+    void greet($).catch(err => $.ui.log(`dutchman: ${String(err)}`, { to: 'debug' }))
     return r
   })
 
@@ -279,7 +311,7 @@ export const register: Register = on => {
     return r
   })
 
-  on('command.run', { command: 'burndown' }, async ($, e) => {
+  on('command.run', { command: 'dutchman' }, async ($, e) => {
     const arg = e.args.trim()
     if (arg === 'setup') {
       const setup = await getConfig($)
@@ -287,7 +319,7 @@ export const register: Register = on => {
       await openPane($, true)
       return { text: 'setup opened.' }
     }
-    // A setup left open without Start is dropped: /burndown shows the tips.
+    // A setup left open without Start is dropped: /dutchman shows the tips.
     await update($, view, v => ({ ...v, setup: null }))
     if (arg === 'refresh') void analyze($)
     await openPane($, true)
@@ -375,7 +407,7 @@ export const register: Register = on => {
     const OFTEN_OPTS: [Config['often'], string][] = [['session', 'Every session'], ['daily', 'Daily'], ['weekly', 'Weekly'], ['monthly', 'Monthly']]
     const CONTEXT: [number, string][] = [[150_000, '150k'], [250_000, '250k'], [400_000, '400k'], [0, 'Never']]
 
-    // ---- welcome: the first session, or /burndown setup ----
+    // ---- welcome: the first session, or /dutchman setup ----
     if (v.setup) {
       const d = v.setup
       const draft = (patch: Partial<Config>) => void update($, view, x => ({ ...x, setup: { ...d, ...patch } }))
@@ -446,7 +478,7 @@ export const register: Register = on => {
         <Box key={t.id} flexDirection="column" marginBottom={isOpen ? 1 : 0}>
           <Box flexDirection="row" justifyContent="space-between">
             <Box flexShrink={1}>
-              <Button key={`row-${t.id}`} plain onPress={set({ open: isOpen ? null : t.id, preview: null, message: null })}>
+              <Button key={`row-${t.id}`} plain onPress={set({ open: isOpen ? null : t.id, preview: null, message: null, plan: null })}>
                 <Text dimColor>{isOpen ? '▾ ' : '▸ '}</Text><Text bold={isOpen}>{t.title}</Text>
               </Button>
             </Box>
@@ -463,9 +495,17 @@ export const register: Register = on => {
                 (t.actions.length ? ' Every file is backed up first; Undo puts it back.' : '') +
                 (t.restart ? ' Takes effect in new sessions.' : ''))}
               {field('Do it', t.next)}
+              {v.plan?.id === t.id && (
+                <Box flexDirection="column" marginBottom={1}>
+                  {v.plan.diff && <Code source={v.plan.diff} format="diff" />}
+                  {v.plan.notes.map((n, i) => <Text key={`note-${i}`} dimColor>{n}</Text>)}
+                </Box>
+              )}
               <Box flexDirection="row" justifyContent="space-between" alignItems="center">
                 <Box flexDirection="row" gap={1}>
                   {!st && t.change && <Button key={`apply-${t.id}`} variant="primary" onPress={() => void apply($, t)}>{KINDS[t.kind].verb}</Button>}
+                  {!st && t.change && <Button key={`plan-${t.id}`} onPress={() => void showPlan($, t)}>
+                    {v.plan?.id === t.id ? 'Hide' : 'What will this do for me?'}</Button>}
                   {st === 'applied' && <Button key={`undo-${t.id}`} variant="primary" onPress={() => void undo($, t)}>Undo</Button>}
                   {!st && <Button key={`dismiss-${t.id}`} onPress={() => void setStatus($, t.id, 'dismissed').then(set({ open: null }))}>Dismiss</Button>}
                   {st === 'dismissed' && <Button key={`restore-${t.id}`} onPress={() => void setStatus($, t.id, undefined)}>Restore</Button>}

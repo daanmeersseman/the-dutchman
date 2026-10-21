@@ -7,6 +7,7 @@ export type Reminder = {
   every?: number // and again at each this many more
   idle_ms?: number // idle reminder: after this long without a turn
   min_tokens?: number // only for a context at least this big
+  on_resume?: boolean // once when a session opens that already carries min_tokens
 }
 
 export type Tip = {
@@ -52,6 +53,7 @@ export type View = {
   message: string | null // the last outcome
   isError?: boolean // whether that outcome is a failure
   preview: string | null // a dry-run diff
+  plan: { id: string; diff: string; notes: string[] } | null // what Apply would do, for the tip that asked
   tab: 'open' | 'earlier' | 'settings'
   config: Config
   setup: Config | null // the welcome screen's picks while it shows
@@ -59,6 +61,6 @@ export type View = {
 
 declare module 'claude-code' {
   interface PluginState {
-    'burndown': { view: View }
+    'dutchman': { view: View }
   }
 }
