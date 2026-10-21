@@ -244,7 +244,7 @@ async function greet($: Api): Promise<void> {
   if (surfaces.length === 0) return
   greeted = true
   if (!(await $.store.get(CONFIG))) {
-    // First session: the welcome screen, once. The defaults hold until Start, also when the pane is closed.
+    // First session: the welcome screen, once. The defaults hold until Save, also when the pane is closed.
     await $.store.set(CONFIG, DEFAULTS)
     await update($, view, v => ({ ...v, setup: DEFAULTS }))
     return openPane($, true)
@@ -319,7 +319,7 @@ export const register: Register = on => {
       await openPane($, true)
       return { text: 'setup opened.' }
     }
-    // A setup left open without Start is dropped: /dutchman shows the tips.
+    // A setup left open without Save is dropped: /dutchman shows the tips.
     await update($, view, v => ({ ...v, setup: null }))
     if (arg === 'refresh') void analyze($)
     await openPane($, true)
@@ -422,8 +422,10 @@ export const register: Register = on => {
           {choice('notify', 'Open tips', 'at session start', d.notify, NOTIFY, x => draft({ notify: x }), 'pane')}
           {choice('often', 'Show them', 'at most', d.often, OFTEN_OPTS, x => draft({ often: x }), 'weekly')}
           {choice('context', 'Nudge past', 'tokens in one session', d.contextAt, CONTEXT, x => draft({ contextAt: x }), 250_000)}
-          <Box flexDirection="row" justifyContent="space-between" alignItems="center">
-            <Button key="start" variant="primary" autoFocus onPress={() => void start()}>Start</Button>
+          <Box flexDirection="row" alignItems="center" gap={2} marginTop={1}>
+            <Box borderStyle="round" borderColor="success" paddingX={1}>
+              <Button key="start" variant="primary" autoFocus onPress={() => void start()}>Save</Button>
+            </Box>
             <Text dimColor>Change it later under Settings</Text>
           </Box>
         </Box>
