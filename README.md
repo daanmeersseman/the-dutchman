@@ -2,11 +2,11 @@
   <img src="assets/banner.png" alt="The Dutchman: not a cent more on Claude Code than needed" width="100%">
 </p>
 
-The Dutchman reads your own Claude Code logs, finds the settings and habits that cost you money, and tells you how
-much. One click applies the fix, and one click undoes it.
-
 As we all know, the Dutch are notoriously stingy. And yet we could all use a Dutchman looking over our shoulder
 while we use Claude.
+
+The Dutchman reads your own Claude Code logs, finds the settings and habits that cost you money, and tells you how
+much. One click applies the fix, and one click undoes it.
 
 [![CI](https://github.com/daanmeersseman/the-dutchman/actions/workflows/ci.yml/badge.svg)](https://github.com/daanmeersseman/the-dutchman/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-E8613C.svg)](LICENSE)
