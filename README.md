@@ -13,7 +13,8 @@ much. One click applies the fix, and one click undoes it.
 ![Claude Code plugin](https://img.shields.io/badge/Claude%20Code-plugin-1F1B1A.svg)
 
 ```
-/plugin install dutchman --marketplace daanmeersseman/the-dutchman
+/plugin marketplace add daanmeersseman/the-dutchman
+/plugin install dutchman@the-dutchman
 ```
 
 ## Why
@@ -24,85 +25,119 @@ a habit, and each one is easy to fix once you can see it.
 
 The Dutchman shows which ones apply to *you*, priced on your own sessions.
 
+## What it looks like
+
+```
+╭─ The Dutchman ─────────────────────────────────────────────────────────────╮
+│ $864 in 30 days  ·  ~$57/mo to save  ·  $145/mo at stake           Refresh │
+│ Amounts are at list price and count only logged calls; your bill can       │
+│ differ by a few percent.                                                   │
+│                                                                            │
+│ [ Open 6 ]  Applied & dismissed 0   Settings                               │
+│                                                                            │
+│ FIXES                                                                      │
+│ ▾ Let Opus plan and Sonnet do the work                             ~$57/mo │
+│     Why      Your main sessions ran on Opus for planning and doing         │
+│              alike: $520 of $590.                                          │
+│     How      With "opusplan", Opus writes the plan; after you approve      │
+│              it, Sonnet carries it out at about half the price.            │
+│     Saving   about $57 per month at list price.                            │
+│     Changes  Sets "model": "opusplan" in ~/.claude/settings.json.          │
+│                                                                            │
+│     [ Apply ]  [ What will this do for me? ]  [ Dismiss ]       Guide §6.2 │
+│                                                                            │
+│ ▸ Turn off MCP server you never use here: aspire                           │
+│                                                                            │
+│ REMINDERS                                                                  │
+│ ▸ Get a nudge when a session passes 250k                            $91/mo │
+│ ▸ Get a nudge when you resume a big session                         $28/mo │
+│                                                                            │
+│ CHECKS                                                                     │
+│ ▸ Your subagent model setting is not applied                        $23/mo │
+│ ▸ 3 rules in this repo load on every turn                            $3/mo │
+╰────────────────────────────────────────────────────────────────────────────╯
+```
+
+A `~` amount is what the fix saves. An amount without `~` is what the problem cost you; the reminder or check helps
+you act on it. **What will this do for me?** shows what Apply changes, before anything is written:
+
+```
+~/.claude/settings.json
+  model: "sonnet" → "opusplan"
+Backed up first to ~/.claude/dutchman/backups. Undo puts it back.
+```
+
 ## How it works
 
-1. **At session start** The Dutchman reads the last 30 days of `~/.claude/projects` and your settings, in the background,
-   at most once a day.
-2. **A pane opens** with the tips that apply, each with what it costs or saves per month.
-3. **Open a tip** to see what was found in your logs and what the amount assumes. **What will this do for me?** lists
-   the exact settings and lines that change on your machine, before anything is written.
-4. **Apply** makes the change without calling a model. Every file is backed up first. **Undo** puts it back, and
-   refuses if you edited the file since.
-
-An example pane:
-
-```
-$1,897 in 30 days  ·  ~$40/mo to save  ·  $253/mo at stake          Refresh
-Amounts are at list price and count only logged calls; your bill can
-differ by a few percent.
-
- Open 4    Applied & dismissed 0    Settings
-
-FIXES
-▸ Keep the cache warm for an hour instead of 5 minutes        ~$40/mo
-▸ Turn off an MCP server you never use here: aspire
-REMINDERS
-▾ Get a nudge when a session passes 250k                $197/mo at stake
-    Why    Every turn re-sends the whole conversation. 14 of your sessions
-           grew past 250k tokens; their turns past that point cost $196.78.
-    How    Once a session passes 250k tokens, a toast says so, once.
-    [ Turn on ]  [ Dismiss ]                                      Guide §4
-CHECKS
-▸ 3 rules in this repo load on every turn                   $3/mo at stake
-```
+1. **At session start** The Dutchman reads your logs in `~/.claude/projects` and your settings, in the background. By
+   default it reads the last 30 days, at most once a day.
+2. **A pane opens** with the tips that apply to you, grouped as fixes, reminders and checks.
+3. **Open a tip** to see what was found in your logs, how the fix works and what the amount assumes.
+4. **Apply** (or **Turn on** for a reminder) makes the change without calling a model. Every file is backed up first.
+   The tip moves to **Applied & dismissed**, where **Undo** puts the file back. Undo refuses if you edited the file
+   since.
 
 ## The tips
 
-A tip only shows when your own logs show the problem, and only after at least 7 days of logs.
+A tip shows only when your own logs show the problem, and only after 7 days of logs.
 
-| Tip | What it does | Amount |
+**Fixes** change a setting or a file. One click, one click back.
+
+| Tip | What Apply does | Amount |
 |---|---|---|
-| **1-hour cache** | Keeps the prompt cache warm for an hour instead of 5 minutes | exact: your sessions replayed |
+| **1-hour cache** | Keeps the prompt cache warm for an hour instead of 5 minutes | exact |
+| **Opus plans, Sonnet works** | Sets the main model to `opusplan`, and starts sessions in plan mode unless you chose a mode | estimate |
 | **Subagents on Sonnet** | Runs the built-in Explore, Plan and general-purpose agents on Sonnet | estimate |
-| **Opus plans, Sonnet works** | Switches the main model to `opusplan` and starts sessions in plan mode | estimate |
 | **Lower effort** | Sets Opus to medium effort when it runs at xhigh or max for everything | estimate |
-| **Ignored effort setting** | Moves an effort setting to where Opus reads it | configuration |
-| **Output style** | Fixes an output style that is not active because of its spelling | configuration |
-| **Concise output** | Sets a concise output style when none is set | estimate |
-| **Autocompact window** | Replaces a low autocompact percentage with a fixed window of 300k tokens | configuration |
-| **Browser agent** | Adds a Sonnet subagent for Playwright, so screenshots and snapshots stay out of the main session | estimate |
+| **Ignored effort setting** | Moves an effort setting to where Opus reads it | setting |
+| **Concise output** | Sets the Concise output style when none is set | estimate |
+| **Output style spelling** | Fixes an output style that is not active because of its spelling | setting |
+| **Autocompact window** | Replaces a low autocompact percentage with a fixed window of 300k tokens | setting |
+| **Browser agent** | Adds a Sonnet subagent for Playwright, so screenshots stay out of the main session | estimate |
 | **CLAUDE.md imports** | Turns a big `@file` import in your user CLAUDE.md into a line Claude reads only when needed | measured |
-| **Long sessions** | A reminder when a session passes 250k tokens, plus a `/handover` skill | measured |
-| **Cache expiry** | A reminder before the cache of a big session runs out | measured |
-| **Cold resume** | A reminder when you resume a big session whose cache has expired | measured |
-| **Unused MCP servers** | Turns off MCP servers you never call in this project | count |
-| **Unused user MCP servers** | Turns off MCP servers from your user config that you never call | count |
+| **Unused MCP servers** | Turns off MCP servers you never call, in this project or in your user config | count |
 | **Unused plugins** | Disables plugins whose skills, commands and agents you never use | count |
 | **Idle skills** | Makes skills Claude never picks load only when you type `/name` | count |
-| **Always-on rules** | Points out project rules without a path scope | check |
-| **Command output** | Suggests RTK when shell output fills your context | measured |
 
-*Exact* replays your own calls with the change. *Estimate* rests on one assumption, shown with the tip. *Measured*
-tells you what the problem cost, without promising what the fix saves.
+**Reminders** are toasts at the moment a habit starts to cost money.
+
+| Tip | When it nudges you | Amount |
+|---|---|---|
+| **Long sessions** | A session passes 250k tokens. Also installs a `/handover` skill to start fresh. | measured |
+| **Cache expiry** | A big session is about to lose its cache while you are away | measured |
+| **Cold resume** | You resume a big session whose cache has expired | measured |
+
+**Checks** point out what The Dutchman cannot change for you, and say what to do.
+
+| Tip | What it points out | Amount |
+|---|---|---|
+| **Always-on rules** | Project rules without a path scope, loaded on every turn | measured |
+| **Command output** | Shell output that fills your context; suggests RTK | measured |
+| **Subagent model not applied** | `CLAUDE_CODE_SUBAGENT_MODEL` is set, yet helper agents still ran on Opus | measured |
+
+*Exact* replays your own calls with the change. *Estimate* rests on one assumption, shown with the tip. *Measured* is
+what the problem cost you, without promising what a fix saves. *Setting* and *count* fix something that is plainly
+wrong or unused, so there is no amount.
 
 ## Settings
 
-On first start the pane asks four things, with the recommended answer already picked:
+On first start the pane asks four things, with the recommended answer picked. Press **Save** to keep them.
 
-- the minimum saving per month for a tip to show (**$5**);
-- how open tips reach you: open the pane (**recommended**), a notice with the amount, or nothing until you type
-  `/dutchman`;
-- how often they may do so: every session, daily, **weekly** or monthly;
-- from what context size a long session nudges you (**250k**).
+| Question | Options | Recommended |
+|---|---|---|
+| Show tips from | $1, $5, $20 per month, or any | **$5** |
+| Open tips at session start | open the pane, a notice, or quiet until you type `/dutchman` | **open the pane** |
+| Show them at most | every session, daily, weekly, monthly | **weekly** |
+| Nudge past | 150k, 250k, 400k tokens in one session, or never | **250k** |
 
-The **Settings** tab holds these, plus how many days of logs to read (14, 30, 90), how often to read them again
-(daily, weekly, only on Refresh), and from what monthly cost the cache reminder is offered.
+The **Settings** tab holds these too, plus how many days of logs to read (14, 30 or 90), how often to read them again
+(daily, weekly, or only on Refresh) and from what monthly cost the cache reminders are offered ($5, $20 or never).
 
 | Command | |
 |---|---|
 | `/dutchman` | Open the pane |
 | `/dutchman refresh` | Read the logs again, then open the pane |
-| `/dutchman setup` | Open the first-start choices again |
+| `/dutchman setup` | Show the first-start questions again |
 
 ## Privacy
 
