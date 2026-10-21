@@ -6,10 +6,8 @@
 **Not a cent more on Claude Code than needed.** The Dutchman reads your own Claude Code logs, finds the settings and
 habits that cost you money, and tells you how much. One click applies the fix, and one click undoes it.
 
-> **Why the name?** In Belgium, and well beyond, the Dutch are famous for never paying a cent too much: they split
-> every bill, bring their own sandwiches and keep the heating low. The logo is a wooden clog with a coin dropping in,
-> because a true Dutchman keeps the savings close at hand. This plugin is that Dutchman, looking over your
-> shoulder at your Claude Code bill.
+As we all know, the Dutch are notoriously stingy. And yet we could all use a Dutchman looking over our shoulder
+while we use Claude.
 
 [![CI](https://github.com/daanmeersseman/the-dutchman/actions/workflows/ci.yml/badge.svg)](https://github.com/daanmeersseman/the-dutchman/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-E8613C.svg)](LICENSE)
