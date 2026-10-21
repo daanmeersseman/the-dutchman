@@ -14,11 +14,15 @@ const TITLE = 'Burndown'
 const RESULT = 'result-v5' // bump when the tip shape changes, so an old cached result is not shown
 const STATE = 'state-v2'
 const CONFIG = 'config-v1'
+const ANNOUNCED = 'announced-at'
+const REFRESH = { daily: DAY, weekly: 7 * DAY, manual: Infinity } as const
+// How long after an announcement the next may come; a little under the period, so a session at the same hour counts.
+const OFTEN = { session: 0, daily: DAY - 3_600_000, weekly: 7 * DAY - 3_600_000, monthly: 30 * DAY - 3_600_000 } as const
 const fsPath = (u: URL) => decodeURIComponent(u.pathname).replace(/^\/([A-Za-z]:)/, '$1')
 const ANALYZE = fsPath(new URL('../scripts/analyze.py', import.meta.url))
 const ACTIONS = fsPath(new URL('../scripts/actions.py', import.meta.url))
 
-const DEFAULTS: Config = { minSaving: 5, notify: 'pane', contextAt: 250_000, days: 30, refresh: 'daily', cacheStake: 5 }
+const DEFAULTS: Config = { minSaving: 5, notify: 'pane', contextAt: 250_000, days: 30, refresh: 'daily', cacheStake: 5, often: 'weekly' }
 
 const view = atom({ plugin: 'burndown', key: 'view' } as const, {
   result: null, state: {}, open: null, busy: null, message: null, preview: null, tab: 'open', config: DEFAULTS, setup: null,
@@ -218,13 +222,13 @@ async function greet($: Api): Promise<void> {
   const res = ((await $.store.get(RESULT)) as Result | undefined) ?? (await analysis)
   const c = await getConfig($)
   if (!res || c.notify === 'command') return
-  // Only for new tips, and not once the user is working.
+  // At most once per period the user picked, and not once the user is working.
   const state = ((await $.store.get(STATE)) ?? {}) as State
-  const open = res.tips.filter(t => isOpenTip(state, c, t))
-  const seen = ((await $.store.get('seen')) ?? []) as string[]
-  const news = DRY ? open : open.filter(t => !seen.includes(t.id)) // test mode: every session
-  await $.store.set('seen', [...new Set([...seen, ...open.map(t => t.id)])])
-  if (news.length === 0 || (hasPrompted && !DRY)) return
+  const news = res.tips.filter(t => isOpenTip(state, c, t))
+  const now = await $.clock.now()
+  const last = ((await $.store.get(ANNOUNCED)) ?? 0) as number
+  if (news.length === 0 || (hasPrompted && !DRY) || (!DRY && now - last < OFTEN[c.often])) return
+  await $.store.set(ANNOUNCED, now)
   if (c.notify === 'pane') return openPane($)
   // The app puts the plugin's name above a toast, so the text starts with the money. A promised saving and a
   // measured cost ("at stake") stay apart: only an exact or estimated saving is called a saving.
@@ -237,8 +241,6 @@ async function greet($: Api): Promise<void> {
   const n = news.length
   $.ui.toast(`${head}. ${n} tip${n > 1 ? 's' : ''} to bring it down: type /burndown.`, { timeoutMs: 30_000 })
 }
-
-const REFRESH = { daily: DAY, weekly: 7 * DAY, manual: Infinity } as const
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
@@ -315,7 +317,10 @@ export const register: Register = on => {
       : ''
     const header = (
       <Box flexDirection="row" justifyContent="space-between" marginBottom={1}>
-        <Box flexShrink={1} marginRight={2}><Text dimColor>{summary}{DRY ? '  ·  test mode' : ''}</Text></Box>
+        <Box flexDirection="column" flexShrink={1} marginRight={2}>
+          <Text dimColor>{summary}{DRY ? '  ·  test mode' : ''}</Text>
+          {summary && <Text dimColor>Amounts are at list price and count only logged calls; your bill can differ by a few percent.</Text>}
+        </Box>
         <Button key="refresh" plain dimColor onPress={() => void analyze($)}>Refresh</Button>
       </Box>
     )
@@ -367,6 +372,7 @@ export const register: Register = on => {
 
     const MIN: [number, string][] = [[1, '$1'], [5, '$5'], [20, '$20'], [0, 'Any']]
     const NOTIFY: [Config['notify'], string][] = [['toast', 'Notice'], ['pane', 'Open pane'], ['command', 'Quiet']]
+    const OFTEN_OPTS: [Config['often'], string][] = [['session', 'Every session'], ['daily', 'Daily'], ['weekly', 'Weekly'], ['monthly', 'Monthly']]
     const CONTEXT: [number, string][] = [[150_000, '150k'], [250_000, '250k'], [400_000, '400k'], [0, 'Never']]
 
     // ---- welcome: the first session, or /burndown setup ----
@@ -381,7 +387,8 @@ export const register: Register = on => {
         <Box flexDirection="column">
           <Box marginBottom={1}><Text dimColor>Reads your Claude Code logs on this machine. Nothing changes until you press Apply.</Text></Box>
           {choice('min', 'Show tips from', 'per month', d.minSaving, MIN, x => draft({ minSaving: x }), 5)}
-          {choice('notify', 'New tips', 'at session start', d.notify, NOTIFY, x => draft({ notify: x }), 'pane')}
+          {choice('notify', 'Open tips', 'at session start', d.notify, NOTIFY, x => draft({ notify: x }), 'pane')}
+          {choice('often', 'Show them', 'at most', d.often, OFTEN_OPTS, x => draft({ often: x }), 'weekly')}
           {choice('context', 'Nudge past', 'tokens in one session', d.contextAt, CONTEXT, x => draft({ contextAt: x }), 250_000)}
           <Box flexDirection="row" justifyContent="space-between" alignItems="center">
             <Button key="start" variant="primary" autoFocus onPress={() => void start()}>Start</Button>
@@ -401,7 +408,8 @@ export const register: Register = on => {
           {tabs}
           {heading('TIPS')}
           {choice('min', 'Show tips from', 'per month', c.minSaving, MIN, x => void setConfig($, { minSaving: x }), 5)}
-          {choice('notify', 'New tips', 'at session start', c.notify, NOTIFY, x => void setConfig($, { notify: x }), 'pane')}
+          {choice('notify', 'Open tips', 'at session start', c.notify, NOTIFY, x => void setConfig($, { notify: x }), 'pane')}
+          {c.notify !== 'command' && choice('often', 'Show them', 'at most', c.often, OFTEN_OPTS, x => void setConfig($, { often: x }), 'weekly')}
           {heading('REMINDERS')}
           {choice('context', 'Nudge past', 'tokens in one session', c.contextAt, CONTEXT, x => void setConfig($, { contextAt: x }), 250_000)}
           {choice('stake', 'Cache reminder from', 'lost to expired caches per month', c.cacheStake,

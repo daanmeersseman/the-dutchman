@@ -40,6 +40,7 @@ export type Config = {
   contextAt: number // long-session reminder threshold in tokens; 0: never
   days: number // how far back the analysis reads
   refresh: 'daily' | 'weekly' | 'manual'
+  often: 'session' | 'daily' | 'weekly' | 'monthly' // how often open tips announce themselves at most
   cacheStake: number // cache-expiry reminder only when at least this much per month is at stake; 0: never
 }
 

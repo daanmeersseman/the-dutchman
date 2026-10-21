@@ -35,6 +35,8 @@ An example pane:
 
 ```
 $1,897 in 30 days  ·  ~$40/mo to save  ·  $253/mo at stake          Refresh
+Amounts are at list price and count only logged calls; your bill can
+differ by a few percent.
 
  Open 4    Applied & dismissed 0    Settings
 
@@ -75,11 +77,12 @@ tells you what the problem cost, without promising what the fix saves.
 
 ## Settings
 
-On first start the pane asks three things, with the recommended answer already picked:
+On first start the pane asks four things, with the recommended answer already picked:
 
 - the minimum saving per month for a tip to show (**$5**);
-- how new tips reach you: open the pane (**recommended**), a notice with the amount, or nothing until you type
+- how open tips reach you: open the pane (**recommended**), a notice with the amount, or nothing until you type
   `/burndown`;
+- how often they may do so: every session, daily, **weekly** or monthly;
 - from what context size a long session nudges you (**250k**).
 
 The **Settings** tab holds these, plus how many days of logs to read (14, 30, 90), how often to read them again
